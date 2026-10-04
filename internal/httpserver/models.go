@@ -65,6 +65,16 @@ func (a modelsAPI) update(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// copy makes a new entry from an existing one.
+func (a modelsAPI) copy(w http.ResponseWriter, r *http.Request) {
+	m, err := a.models.Copy(r.Context(), r.PathValue("modelId"))
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, view(m))
+}
+
 type modelSelection struct {
 	ModelID *string `json:"modelId"`
 }

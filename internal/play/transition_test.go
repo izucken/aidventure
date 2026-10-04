@@ -75,6 +75,17 @@ func TestDoTransition(t *testing.T) {
 		t.Fatalf("delete opening entry: err = %v", err)
 	}
 
+	// A cut exits those who cross into the new scene; whoever stays behind is left unsaid.
+	if _, err := do(th.ID, cutTo(tavern.ID, mara.ID, fen.ID), mara.ID, open); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := entries.List(ctx, g.ID, th.ID, sc.ID); left[len(left)-1].Type != entry.Exit || len(left[len(left)-1].Actors) != 1 || left[len(left)-1].Actors[0] != mara.ID {
+		t.Fatalf("after cut, first scene ends with %+v", left[len(left)-1])
+	}
+	if now, _ := scenes.List(ctx, g.ID, th.ID); len(now[0].Cast) != 1 || now[0].Cast[0] != narrator.ID {
+		t.Fatalf("left behind = %+v", now[0].Cast)
+	}
+
 	// A place made on the way is linked to the place left, in the given words.
 	fresh := play.Direction{Type: entry.Cut, NewPlace: &subject.Input{Name: " The quay ", Description: "Stone landing."}, Cast: []string{mara.ID, narrator.ID, fen.ID}}
 	if _, err := do(th.ID, fresh, mara.ID, open); !errors.Is(err, play.ErrBadTransition) {
@@ -101,7 +112,7 @@ func TestDoTransition(t *testing.T) {
 	if links, err := subjects.Links(ctx, g.ID); err != nil || len(links) != 1 || links[0].FromID != quay.ID || links[0].ToID != tavern.ID || links[0].Relation != "down the steps from" {
 		t.Fatalf("links = %+v, %v", links, err)
 	}
-	if all, err := scenes.List(ctx, g.ID, th.ID); err != nil || len(all) != 2 || all[1].ID != second.Scene.ID || len(all[1].Cast) != 3 {
+	if all, err := scenes.List(ctx, g.ID, th.ID); err != nil || len(all) != 3 || all[2].ID != second.Scene.ID || len(all[2].Cast) != 3 {
 		t.Fatalf("scenes = %+v, %v", all, err)
 	}
 	if err := subjects.Delete(ctx, g.ID, mara.ID); !errors.Is(err, subject.ErrInUse) {
@@ -137,8 +148,8 @@ func TestDoTransition(t *testing.T) {
 	if len(all) != 2 || all[1].ID != off.ThreadID || all[1].Name != "Narrator, Mara" || all[1].ParentSceneID != second.Scene.ID {
 		t.Fatalf("threads = %+v", all)
 	}
-	if left, _ := scenes.List(ctx, g.ID, th.ID); len(left[1].Cast) != 1 || left[1].Cast[0] != fen.ID {
-		t.Fatalf("source cast after split = %+v", left[1].Cast)
+	if left, _ := scenes.List(ctx, g.ID, th.ID); len(left[2].Cast) != 1 || left[2].Cast[0] != fen.ID {
+		t.Fatalf("source cast after split = %+v", left[2].Cast)
 	}
 
 	// A converge walks a thread's cast into another's current scene and ends it.
@@ -166,8 +177,8 @@ func TestDoTransition(t *testing.T) {
 	if cur, _ := threads.Current(ctx, g.ID); cur != th.ID {
 		t.Fatalf("current thread after converge = %q", cur)
 	}
-	if joined, _ := scenes.List(ctx, g.ID, th.ID); len(joined[1].Cast) != 3 {
-		t.Fatalf("joined cast = %+v", joined[1].Cast)
+	if joined, _ := scenes.List(ctx, g.ID, th.ID); len(joined[2].Cast) != 3 {
+		t.Fatalf("joined cast = %+v", joined[2].Cast)
 	}
 	if err := entries.Delete(ctx, g.ID, th.ID, second.Scene.ID, back.Entry.ID); !errors.Is(err, entry.ErrEnding) {
 		t.Fatalf("delete converge entry: err = %v", err)
@@ -183,7 +194,7 @@ func TestDoTransition(t *testing.T) {
 	}
 	if all, err := entries.ListThread(ctx, g.ID, th.ID); err != nil {
 		t.Fatal(err)
-	} else if beats := slices.DeleteFunc(slices.Clone(all), func(e entry.Entry) bool { return e.ActorID == "" }); len(beats) != 4 || beats[2].Type != entry.Converge || beats[3].Type != entry.Cut {
+	} else if beats := slices.DeleteFunc(slices.Clone(all), func(e entry.Entry) bool { return e.ActorID == "" }); len(beats) != 5 || beats[3].Type != entry.Converge || beats[4].Type != entry.Cut {
 		t.Fatalf("thread beats = %+v", beats)
 	}
 

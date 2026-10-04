@@ -29,6 +29,17 @@ export function Models({ onError }: Props) {
     api.currentModel().then(setActiveId).catch(onError);
   }, [onError]);
 
+  // A copy is a new entry made from this one, key and all, opened for editing.
+  async function copy(id: string) {
+    try {
+      const made = await api.copyModel(id);
+      setModels(await api.models());
+      pick(made);
+    } catch (err) {
+      onError(err);
+    }
+  }
+
   async function activate(id: string) {
     try {
       await api.selectModel(id);
@@ -91,11 +102,16 @@ export function Models({ onError }: Props) {
                   {m.think && (m.thinkBudget ? ` · thinking, up to ${m.thinkBudget} tokens` : " · thinking")}
                 </span>
               </button>
-              {m.id !== activeId && (
-                <button type="button" className={styles.use} onClick={() => void activate(m.id)}>
-                  Use
+              <span className={styles.controls}>
+                <button type="button" title="Make a copy of this entry" onClick={() => void copy(m.id)}>
+                  Copy
                 </button>
-              )}
+                {m.id !== activeId && (
+                  <button type="button" onClick={() => void activate(m.id)}>
+                    Use
+                  </button>
+                )}
+              </span>
             </li>
           ))}
         </ul>

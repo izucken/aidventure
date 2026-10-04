@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,8 +22,8 @@ import (
 	"aidventure/internal/thread"
 )
 
-// crew answers the director's job with moves and the entry job with lines,
-// and keeps the last directing request.
+// crew answers the director's job with a decision and the entry job with
+// beats, both as JSON, and keeps the last directing request.
 type crew struct {
 	moves  string
 	lines  string
@@ -40,7 +41,25 @@ func (c *crew) Complete(_ context.Context, req llm.Request) (llm.Response, error
 }
 
 func (c *crew) Render(_ context.Context, req llm.Request) (llm.Rendered, error) {
-	return llm.Rendered{Prompt: req.User, Grammar: req.Grammar}, nil
+	return llm.Rendered{Prompt: req.User}, nil
+}
+
+// decision is a director's answer in the schema, with the fields a move has no use for null or empty.
+func decision(move, next string, rest ...string) string {
+	fields := map[string]any{"move": move, "place": nil, "newPlace": nil, "with": []string{}, "into": nil, "next": next}
+	for i := 0; i+1 < len(rest); i += 2 {
+		var v any
+		_ = json.Unmarshal([]byte(rest[i+1]), &v)
+		fields[rest[i]] = v
+	}
+	b, _ := json.Marshal(fields)
+	return string(b)
+}
+
+// moves is what the director's schema offers.
+func moves(req llm.Request) []string {
+	enum, _ := req.Schema["properties"].(map[string]any)["move"].(map[string]any)["enum"].([]string)
+	return enum
 }
 
 // directed reads the decision an advance recorded.
@@ -72,7 +91,7 @@ func TestAdvance(t *testing.T) {
 	fen, _ := subjects.Create(ctx, g.ID, subject.Input{Name: "Fen", Actor: true})
 	m, _ := models.Create(ctx, model.Input{Name: "m", Engine: model.LlamaCpp, Endpoint: "http://h:1", Model: "x"})
 	_ = models.SetCurrent(ctx, m.ID)
-	eng := &crew{moves: "narrative\nnext Innkeeper\n", lines: "\"Nine days.\"\n"}
+	eng := &crew{moves: decision("narrative", "Innkeeper"), lines: `[{"kind":"speech","text":"Nine days."}]`}
 	roller := &play.Roller{
 		DB: db, Models: models, Threads: threads, Subjects: subjects, Scenes: scenes, Entries: entries,
 		Engine: func(model.Model) (llm.Engine, error) { return eng, nil },
@@ -122,8 +141,8 @@ func TestAdvance(t *testing.T) {
 			t.Fatalf("sheet missing %q:\n%s", want, eng.direct.User)
 		}
 	}
-	if !strings.Contains(eng.direct.Grammar, `"split\n"`) || strings.Contains(eng.direct.Grammar, `"converge\n"`) || !strings.Contains(eng.direct.Grammar, `known ::= "Tavern"`) || !strings.Contains(eng.direct.Grammar, `" | "`) || !strings.Contains(eng.direct.Grammar, `tracked ::= "Innkeeper" | "Mara"`) || !strings.Contains(eng.direct.Grammar, `"next " present`) {
-		t.Fatalf("grammar = %s", eng.direct.Grammar)
+	if offered := moves(eng.direct); !slices.Contains(offered, "split") || slices.Contains(offered, "converge") || eng.direct.Schema["additionalProperties"] != false {
+		t.Fatalf("schema = %+v", eng.direct.Schema)
 	}
 	if cur, _ := roller.Turn(ctx, g.ID, th.ID); cur != nil {
 		t.Fatalf("turn open after model entry: %+v", cur)
@@ -135,12 +154,12 @@ func TestAdvance(t *testing.T) {
 	if _, err := roller.Advance(ctx, g.ID, th.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(eng.direct.System, "You decide where things go next in the active thread. Read the state and answer; the first line is one word:\nYou do this as the dungeon master.\n") {
+	if !strings.HasPrefix(eng.direct.System, "You decide where things go next in the active thread. Read the state and answer in the schema given. The move is one of:\nYou do this as the dungeon master.\n") {
 		t.Fatalf("director brief = %q", eng.direct.System)
 	}
 
 	// User actor named: the direction is recorded and handed back as a turn, nothing else written.
-	eng.moves = "narrative\nnext Mara\n"
+	eng.moves = decision("narrative", "Mara")
 	out, err = roller.Advance(ctx, g.ID, th.ID, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -178,14 +197,6 @@ func TestAdvance(t *testing.T) {
 		t.Fatalf("turn after pass = %+v, %v, entries %d", cur, err, count(sc.ID))
 	}
 
-	// What a model says after its answer is commentary, not answer.
-	eng.moves = "narrative\nnext Innkeeper\n\nShe has been quiet; let him fill it.\n"
-	if out, err := roller.Advance(ctx, g.ID, th.ID, nil); err != nil || out.Result == nil || out.Entry.ActorID != innkeeper.ID {
-		t.Fatalf("with commentary = %+v, %v", out, err)
-	}
-	if err := roller.Pass(ctx, g.ID, th.ID); !errors.Is(err, play.ErrNoTurn) {
-		t.Fatal(err)
-	}
 	// The director may not hand the first word to someone the move leaves out.
 	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, []string{mara.ID}); err != nil {
 		t.Fatal(err)
@@ -194,17 +205,17 @@ func TestAdvance(t *testing.T) {
 		t.Fatalf("absent actor named: err = %v", err)
 	}
 	// With one actor present the director is still asked, and a refused answer records nothing.
-	eng.moves = "narrative\nnext Innkeeper\n"
+	eng.moves = decision("narrative", "Innkeeper")
 	asked, n = len(eng.asked), count(sc.ID)
 	if out, err := roller.Advance(ctx, g.ID, th.ID, nil); err != nil || out.Result == nil || len(eng.asked) != asked+2 || count(sc.ID) != n+2 {
 		t.Fatalf("single cast = %+v, %v, asked %d", out, err, len(eng.asked)-asked)
 	}
-	if strings.Contains(eng.direct.Grammar, `"split\n"`) {
-		t.Fatalf("split offered to one: %s", eng.direct.Grammar)
+	if slices.Contains(moves(eng.direct), "split") {
+		t.Fatalf("split offered to one: %+v", moves(eng.direct))
 	}
 
 	// The director cuts: the direction ends the old scene, the entry opens the next.
-	eng.moves = "cut\n-> Tavern\nwith Innkeeper\nnext Innkeeper\n"
+	eng.moves = decision("cut", "Innkeeper", "place", `"Tavern"`, "with", `["Innkeeper"]`)
 	out, err = roller.Advance(ctx, g.ID, th.ID, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -222,7 +233,7 @@ func TestAdvance(t *testing.T) {
 	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{mara.ID}); err != nil {
 		t.Fatal(err)
 	}
-	eng.moves = "split\n=> The quay: a stone landing | down the steps from\nwith Mara\nnext Mara\n"
+	eng.moves = decision("split", "Mara", "newPlace", `{"name":"The quay","description":"a stone landing","link":"down the steps from"}`, "with", `["Mara"]`)
 	out, err = roller.Advance(ctx, g.ID, th.ID, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +248,7 @@ func TestAdvance(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A split that takes every tracked actor is a cut.
-	eng.moves = "split\n-> Tavern\nwith Innkeeper, Mara\nnext Innkeeper\n"
+	eng.moves = decision("split", "Innkeeper", "place", `"Tavern"`, "with", `["Innkeeper", "Mara"]`)
 	if out, err = roller.Advance(ctx, g.ID, th.ID, nil); err != nil || out.Entry.Type != entry.Cut {
 		t.Fatalf("split of all = %+v, %v", out, err)
 	}
@@ -250,12 +261,12 @@ func TestAdvance(t *testing.T) {
 	if _, err := play.DoTransition(ctx, db, g.ID, harbour.ID, play.Transition{Direction: play.Direction{Type: entry.Cut, NewPlace: &subject.Input{Name: "The quay"}, Cast: []string{fen.ID}}, ActorID: fen.ID, Segments: rain}); err != nil {
 		t.Fatal(err)
 	}
-	eng.moves = "converge\ninto Docks\nnext Fen\n"
+	eng.moves = decision("converge", "Fen", "into", `"Docks"`)
 	out, err = roller.Advance(ctx, g.ID, harbour.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(eng.direct.Grammar, `thread ::= "Docks"`) || !strings.Contains(eng.direct.User, "Harbour (active): at The quay, with Fen\n") {
+	if !slices.Contains(moves(eng.direct), "converge") || !strings.Contains(eng.direct.User, "Harbour (active): at The quay, with Fen\n") {
 		t.Fatalf("converge offer: %+v", eng.direct)
 	}
 	all, _ = scenes.List(ctx, g.ID, th.ID)

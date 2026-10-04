@@ -13,10 +13,10 @@ import (
 )
 
 // OpenRouter talks to OpenRouter's chat completions, an OpenAI-shaped API in
-// front of hosted models. No grammar reaches the model: the briefs carry the
-// form and the answer is read as written, less any code fence around it.
-// Reasoning comes back as its own field, and the thinking budget maps onto
-// the provider's reasoning budget.
+// front of hosted models. The schema goes as the response format, which the
+// provider enforces where the model supports structured output; the answer
+// is read as written, less any code fence around it. Reasoning comes back as
+// its own field, and the thinking budget maps onto the provider's reasoning budget.
 type OpenRouter struct {
 	endpoint, key, model string
 	think                bool
@@ -28,12 +28,28 @@ func NewOpenRouter(endpoint, key, model string, think bool, budget int) *OpenRou
 	return &OpenRouter{endpoint: strings.TrimRight(endpoint, "/"), key: key, model: model, think: think, budget: budget, http: &http.Client{Timeout: 10 * time.Minute}}
 }
 
+// answerRoom is how many tokens an answer may take: a director's decision or a
+// handful of beats, with room to spare. The gateway holds credits for the whole
+// limit before generating, so it must be the size of an answer, not of a model.
+const answerRoom = 2048
+
 func (c *OpenRouter) body(req Request, stream bool) map[string]any {
 	body := map[string]any{
 		"model":    c.model,
 		"messages": []message{{"system", req.System}, {"user", req.User}},
 		"stream":   stream,
 		"usage":    map[string]any{"include": true},
+	}
+	limit := answerRoom
+	if c.think && c.budget > 0 {
+		limit += c.budget
+	}
+	body["max_tokens"] = limit
+	if req.Schema != nil {
+		body["response_format"] = map[string]any{"type": "json_schema", "json_schema": map[string]any{"name": "answer", "strict": true, "schema": req.Schema}}
+		// Only providers that enforce every parameter sent, the schema above included;
+		// a model with none fails at the gateway rather than answering nearly right.
+		body["provider"] = map[string]any{"require_parameters": true}
 	}
 	if c.think {
 		reasoning := map[string]any{"enabled": true}
@@ -45,10 +61,9 @@ func (c *OpenRouter) body(req Request, stream bool) map[string]any {
 	return body
 }
 
-// Render shows the messages as sent. There is no grammar to show: the form
-// lives in the brief.
+// Render shows the messages and the schema as sent.
 func (c *OpenRouter) Render(_ context.Context, req Request) (Rendered, error) {
-	return Rendered{Prompt: "SYSTEM\n" + req.System + "\n\nUSER\n" + req.User + "\n"}, nil
+	return Rendered{Prompt: "SYSTEM\n" + req.System + "\n\nUSER\n" + req.User + "\n", Schema: schemaText(req.Schema)}, nil
 }
 
 func (c *OpenRouter) Complete(ctx context.Context, req Request) (Response, error) {

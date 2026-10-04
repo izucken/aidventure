@@ -9,10 +9,13 @@
     gap: 0.4rem;
   }
 
-  .use {
+  /* The item's own controls sit in its corner. */
+  .controls {
     position: absolute;
     top: 0.3rem;
     right: 0.3rem;
+    display: flex;
+    gap: 0.3rem;
     font-size: 0.8em;
   }
 

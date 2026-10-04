@@ -2,6 +2,7 @@ package play
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -15,7 +16,7 @@ import (
 )
 
 // The director's brief: the moves a scene has, and how to answer with one.
-const directing = `You decide where things go next in the active thread. Read the state and answer; the first line is one word:
+const directing = `You decide where things go next in the active thread. Read the state and answer in the schema given. The move is one of:
 narrative   the scene goes on where it is
 cut         actors can move on to another place in this narrative thread, and a new scene begins there with the cut
 split       some tracked actors leave for another place and go on in a new thread; the rest stay here. Only tracked actors, the ones the story follows, are followed by a split; others may go along or stay
@@ -23,21 +24,17 @@ converge    those present go to where another thread is into it's scene, and the
 
 Decision should be guided by narrative coherence - what makes sense to happen next.
 
-After cut or split, say where and who:
--> Place name              a place from PLACES
-=> New place: what it is | how it stands to the current place   a place that does not exist yet; you make it, and say where it is
-with Name, Name            after a cut, who is present there; after a split, who leaves
+The rest of the answer:
+place      for a cut or split to a place from PLACES, its name; otherwise null
+newPlace   for a cut or split to a place that does not exist yet: its name, what it is, and link, how it stands to the current place; otherwise null
+with       after a cut, who is present there; after a split, who leaves; otherwise empty
+into       for a converge, the thread; otherwise null
+next       who acts first, one of those present after the move. Do not let one actor act twice in a row without reason.
 
 Who is present is a matter of staging.
 The cast is who can act in the scene.
 An actor left out has not gone anywhere, and may be present in any later scene.
 Story follows tracked actors, and untracked actors are not important.
-
-After converge, say which thread:
-into Thread name
-
-Last, say who acts first:
-next Name                  one of those present after the move; do not let one actor act twice in a row without reason
 
 Think briefly, a few sentences at most, then answer.`
 
@@ -158,11 +155,13 @@ func (st stage) names(ids []string) []string {
 	return out
 }
 
-// grammar offers the director only the moves the scene has: a split needs two
-// tracked actors to part, and the first to leave must be one of them; a
-// converge needs another thread to join.
-func (st stage) grammar() string {
-	var places, actors, present, tracked, others []string
+// schema is the shape of the director's answer, offering only the moves the
+// scene has and only real names: a split needs two tracked actors to part, a
+// converge needs another thread to join. Every field is present, null or
+// empty when the move has no use for it, which is what strict structured
+// output asks for.
+func (st stage) schema() map[string]any {
+	var places, actors, others []string
 	for _, s := range st.subjects {
 		if s.Scene {
 			places = append(places, s.Name)
@@ -171,39 +170,49 @@ func (st stage) grammar() string {
 			actors = append(actors, s.Name)
 		}
 	}
-	for _, s := range st.present() {
-		present = append(present, s.Name)
-	}
-	for _, s := range st.tracked() {
-		tracked = append(tracked, s.Name)
-	}
 	for _, t := range st.threads {
 		if t.ID != st.threadID {
 			others = append(others, t.Name)
 		}
 	}
-	var b strings.Builder
-	// Each move ends with who acts first; a cut may hand the first word to anyone it brings in.
-	b.WriteString(`root ::= "narrative\n" "next " present "\n" | "cut\n" place "\n" "with " actor (", " actor)* "\n" "next " actor "\n"`)
-	if len(tracked) > 1 {
-		b.WriteString(` | "split\n" place "\n" "with " tracked (", " present)* "\n" "next " present "\n"`)
+	moves := []string{string(entry.Narrative), string(entry.Cut)}
+	if len(st.tracked()) > 1 {
+		moves = append(moves, string(entry.Split))
 	}
 	if len(others) > 0 {
-		b.WriteString(` | "converge\n" "into " thread "\n" "next " present "\n"`)
+		moves = append(moves, string(entry.Converge))
 	}
-	b.WriteString("\nplace ::= \"=> \" [^\\n:|]+ \": \" [^\\n|]+ \" | \" [^\\n]+")
-	if len(places) > 0 {
-		b.WriteString(" | \"-> \" known\nknown ::= " + alternatives(places))
+	oneOf := func(names []string) map[string]any {
+		if len(names) == 0 {
+			return map[string]any{"type": "null"}
+		}
+		return map[string]any{"anyOf": []any{map[string]any{"enum": names}, map[string]any{"type": "null"}}}
 	}
-	b.WriteString("\nactor ::= " + alternatives(actors) + "\n")
-	b.WriteString("present ::= " + alternatives(present) + "\n")
-	if len(tracked) > 1 {
-		b.WriteString("tracked ::= " + alternatives(tracked) + "\n")
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"move":  map[string]any{"enum": moves},
+			"place": oneOf(places),
+			"newPlace": map[string]any{"anyOf": []any{
+				map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name":        map[string]any{"type": "string"},
+						"description": map[string]any{"type": "string"},
+						"link":        map[string]any{"type": "string"},
+					},
+					"required":             []string{"name", "description", "link"},
+					"additionalProperties": false,
+				},
+				map[string]any{"type": "null"},
+			}},
+			"with": map[string]any{"type": "array", "items": map[string]any{"enum": actors}},
+			"into": oneOf(others),
+			"next": map[string]any{"enum": actors},
+		},
+		"required":             []string{"move", "place", "newPlace", "with", "into", "next"},
+		"additionalProperties": false,
 	}
-	if len(others) > 0 {
-		b.WriteString("thread ::= " + alternatives(others) + "\n")
-	}
-	return b.String()
 }
 
 // direct asks the model what happens next in the active thread.
@@ -219,10 +228,10 @@ func (r *Roller) direct(ctx context.Context, st stage, sink Sink) (Direction, er
 		}
 	}
 	req := llm.Request{
-		System:  roleOf(directing, st.told.Director),
-		User:    st.sheet() + "\nWhat happens next in " + active + "?",
-		Grammar: st.grammar(),
-		Stream:  sink.stream("direct"),
+		System: roleOf(directing, st.told.Director),
+		User:   st.sheet() + "\nWhat happens next in " + active + "?",
+		Schema: st.schema(),
+		Stream: sink.stream("direct"),
 	}
 	res, err := complete(ctx, eng, req)
 	if err != nil {
@@ -237,64 +246,45 @@ func (r *Roller) direct(ctx context.Context, st stage, sink Sink) (Direction, er
 	return d, nil
 }
 
-// direction reads the director's answer back into ids: the move, then who acts
-// first under it, who must be one of those the move allows. The grammar only
-// offers real names, so a miss is a bug, not a model error.
-func (st stage) direction(text string) (Direction, error) {
-	var lines []string
-	for _, l := range strings.Split(text, "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			lines = append(lines, l)
-		}
-	}
-	// Without a grammar a model may keep talking after its answer; the answer
-	// ends at the next line, and what follows is commentary.
-	at := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "next ") })
-	if at < 1 {
-		return Direction{}, fmt.Errorf("director did not say who acts: %q", text)
-	}
-	who := strings.TrimSpace(lines[at][5:])
-	d, err := st.move(lines[:at])
-	if err != nil {
-		return Direction{}, err
-	}
-	for _, s := range st.candidates(d) {
-		if strings.EqualFold(s.Name, who) {
-			d.ActorID = s.ID
-			return d, nil
-		}
-	}
-	return Direction{}, fmt.Errorf("director had %q act first, who is not among those the %s allows", who, d.Type)
+// answer is the director's decision as the schema shapes it.
+type answer struct {
+	Move     string  `json:"move"`
+	Place    *string `json:"place"`
+	NewPlace *struct {
+		Name, Description, Link string
+	} `json:"newPlace"`
+	With []string `json:"with"`
+	Into *string  `json:"into"`
+	Next string   `json:"next"`
 }
 
-// move reads the lines that say where the play goes. A split that takes every
-// tracked actor is a cut: nobody left behind is being followed.
-func (st stage) move(lines []string) (Direction, error) {
-	d := Direction{Type: entry.Type(lines[0])}
+// direction reads the director's answer back into ids: the move, then who acts
+// first under it, who must be one of those the move allows. The schema only
+// offers real names, so a miss is a bug, not a model error. A split that
+// takes every tracked actor is a cut: nobody left behind is being followed.
+func (st stage) direction(text string) (Direction, error) {
+	var a answer
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &a); err != nil {
+		return Direction{}, fmt.Errorf("director answered outside the schema: %v: %q", err, text)
+	}
+	d := Direction{Type: entry.Type(a.Move)}
 	switch d.Type {
 	case entry.Narrative:
-		return d, nil
 	case entry.Cut, entry.Split:
-		if len(lines) < 3 {
-			return Direction{}, fmt.Errorf("director gave %q without a place and a cast", d.Type)
-		}
 		switch {
-		case strings.HasPrefix(lines[1], "-> "):
-			name := strings.TrimSpace(lines[1][3:])
-			id, ok := st.byName(name, func(s subject.Subject) bool { return s.Scene })
+		case a.Place != nil && a.NewPlace == nil:
+			id, ok := st.byName(*a.Place, func(s subject.Subject) bool { return s.Scene })
 			if !ok {
-				return Direction{}, fmt.Errorf("director cut to unknown place %q", name)
+				return Direction{}, fmt.Errorf("director %s to unknown place %q", d.Type, *a.Place)
 			}
 			d.PlaceID = id
-		case strings.HasPrefix(lines[1], "=> "):
-			name, rest, _ := strings.Cut(lines[1][3:], ":")
-			desc, link, _ := strings.Cut(rest, "|")
-			d.NewPlace = &subject.Input{Name: strings.TrimSpace(name), Description: strings.TrimSpace(desc), Scene: true}
-			d.Link = strings.TrimSpace(link)
+		case a.NewPlace != nil && a.Place == nil:
+			d.NewPlace = &subject.Input{Name: strings.TrimSpace(a.NewPlace.Name), Description: strings.TrimSpace(a.NewPlace.Description), Scene: true}
+			d.Link = strings.TrimSpace(a.NewPlace.Link)
 		default:
-			return Direction{}, fmt.Errorf("director gave no place: %q", lines[1])
+			return Direction{}, fmt.Errorf("director gave a %s with no place, or both a place and a new one", d.Type)
 		}
-		for _, name := range strings.Split(strings.TrimPrefix(lines[2], "with "), ",") {
+		for _, name := range a.With {
 			id, ok := st.byName(name, func(s subject.Subject) bool { return s.Actor })
 			if !ok {
 				return Direction{}, fmt.Errorf("director cast unknown actor %q", name)
@@ -303,24 +293,34 @@ func (st stage) move(lines []string) (Direction, error) {
 				d.Cast = append(d.Cast, id)
 			}
 		}
+		if len(d.Cast) == 0 {
+			return Direction{}, fmt.Errorf("director gave a %s with nobody in it", d.Type)
+		}
 		if d.Type == entry.Split && !slices.ContainsFunc(st.tracked(), func(s subject.Subject) bool { return !slices.Contains(d.Cast, s.ID) }) {
 			d.Type = entry.Cut
 		}
-		return d, nil
 	case entry.Converge:
-		if len(lines) < 2 {
+		if a.Into == nil {
 			return Direction{}, fmt.Errorf("director converged without a thread")
 		}
-		name := strings.TrimSpace(strings.TrimPrefix(lines[1], "into "))
 		for _, t := range st.threads {
-			if t.ID != st.threadID && strings.EqualFold(t.Name, name) {
+			if t.ID != st.threadID && strings.EqualFold(t.Name, *a.Into) {
 				d.IntoThreadID = t.ID
-				return d, nil
 			}
 		}
-		return Direction{}, fmt.Errorf("director converged into unknown thread %q", name)
+		if d.IntoThreadID == "" {
+			return Direction{}, fmt.Errorf("director converged into unknown thread %q", *a.Into)
+		}
+	default:
+		return Direction{}, fmt.Errorf("director answered with move %q", a.Move)
 	}
-	return Direction{}, fmt.Errorf("director answered %q", lines[0])
+	for _, s := range st.candidates(d) {
+		if strings.EqualFold(s.Name, a.Next) {
+			d.ActorID = s.ID
+			return d, nil
+		}
+	}
+	return Direction{}, fmt.Errorf("director had %q act first, who is not among those the %s allows", a.Next, d.Type)
 }
 
 func (st stage) byName(name string, want func(subject.Subject) bool) (string, bool) {

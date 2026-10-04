@@ -1,25 +1,41 @@
 @layer components {
+  /* Newest at the bottom, overlapping the one above so a burst stays a short
+     pile; the stack itself never grows past a part of the screen, and scrolls. */
   .stack {
     position: fixed;
     right: 1rem;
     bottom: 1rem;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
     width: min(26rem, calc(100vw - 2rem));
+    max-height: 40vh;
+    overflow-y: auto;
+    padding-top: 0.6rem;
     z-index: 10;
   }
 
+  .stack > * + * {
+    margin-top: -0.6rem;
+  }
+
+  .stack > *:hover {
+    z-index: 1;
+  }
+
+  /* Each toast keeps to a few lines; the rest scrolls inside it. */
   .toast {
     display: flex;
     align-items: flex-start;
     gap: 0.6rem;
+    max-height: 7.5rem;
+    overflow-y: auto;
     padding: 0.6rem 0.8rem;
     border: 1px solid #c33;
     border-radius: 0.4rem;
     background: Canvas;
     color: #c33;
-    box-shadow: 0 0.3rem 1rem rgb(0 0 0 / 0.2);
+    box-shadow: 0 -0.2rem 0.8rem rgb(0 0 0 / 0.25);
+    position: relative;
   }
 
   .text {

@@ -12,13 +12,12 @@ import (
 )
 
 type Request struct {
-	// System is standing instruction; User is the material; Prefill is text
-	// the answer must begin with. Prefill is ignored when the model thinks,
-	// since a forced opening would close the thought block before it starts.
-	System, User, Prefill string
-	// Grammar constrains the answer, in the engine's grammar language, and must
-	// define root. Empty is free text. With a thinking model it applies after the thought.
-	Grammar string
+	// System is standing instruction; User is the material.
+	System, User string
+	// Schema is the JSON schema the answer must conform to, as a plain object
+	// tree; nil is free text. Each engine binds it its own way, and with a
+	// thinking model it applies after the thought.
+	Schema map[string]any
 	// Stream, when set, receives the answer as it is produced: part is "think"
 	// or "text". The Response at the end is complete regardless.
 	Stream func(part, delta string) `json:"-"`
@@ -33,10 +32,10 @@ type Response struct {
 }
 
 // Rendered is what the model literally receives: the prompt after the chat
-// template, and the grammar as sent, which may wrap the request's grammar.
+// template, where there is one, and the schema as sent.
 type Rendered struct {
-	Prompt  string `json:"prompt"`
-	Grammar string `json:"grammar"`
+	Prompt string `json:"prompt"`
+	Schema string `json:"schema"`
 }
 
 type Engine interface {

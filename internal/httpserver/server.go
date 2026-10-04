@@ -39,6 +39,7 @@ func New(log *slog.Logger, frontend http.Handler, st Deps) http.Handler {
 	mux.HandleFunc("GET /api/models", m.list)
 	mux.HandleFunc("POST /api/models", m.create)
 	mux.HandleFunc("PUT /api/models/{modelId}", m.update)
+	mux.HandleFunc("POST /api/models/{modelId}/copy", m.copy)
 	mux.HandleFunc("GET /api/models/selection", m.selection)
 	mux.HandleFunc("PUT /api/models/selection", m.setSelection)
 

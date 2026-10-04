@@ -31,7 +31,7 @@ func (f *fakeEngine) Complete(_ context.Context, req llm.Request) (llm.Response,
 }
 
 func (f *fakeEngine) Render(_ context.Context, req llm.Request) (llm.Rendered, error) {
-	return llm.Rendered{Prompt: "<" + req.User + ">", Grammar: req.Grammar}, nil
+	return llm.Rendered{Prompt: "<" + req.User + ">"}, nil
 }
 
 func TestRoll(t *testing.T) {
@@ -58,7 +58,7 @@ func TestRoll(t *testing.T) {
 	}
 	sc := move(th.ID, play.Direction{Type: entry.Cut, PlaceID: tavern.ID, Cast: []string{innkeeper.ID, mara.ID}}, innkeeper.ID, "You said three days.").Scene
 
-	eng := &fakeEngine{think: "Stall her.", reply: "MARA:\n(does not look up)\n\"I know what I said.\"\n"}
+	eng := &fakeEngine{think: "Stall her.", reply: `[{"kind":"action","text":"does not look up"},{"kind":"speech","text":"I know what I said."}]`}
 	roller := &play.Roller{
 		DB: db, Models: models, Threads: threads, Subjects: subjects, Scenes: scenes, Entries: entries,
 		Engine: func(model.Model) (llm.Engine, error) { return eng, nil },
@@ -87,7 +87,6 @@ func TestRoll(t *testing.T) {
 		t.Fatalf("entry = %+v", e)
 	}
 	sc2 := move(th.ID, play.Direction{Type: entry.Cut, PlaceID: tavern.ID, Cast: []string{mara.ID}}, mara.ID, "Later, the same room.").Scene
-	eng.reply = "(does not look up)\n\"I know what I said.\"\n"
 	if _, err := roller.Roll(ctx, g.ID, th.ID, sc2.ID, mara.ID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +105,7 @@ func TestRoll(t *testing.T) {
 			t.Fatalf("prompt missing %q:\n%s", want, eng.got.User)
 		}
 	}
-	if eng.got.Prefill != "MARA:\n" || eng.got.Grammar != entry.Grammar {
+	if eng.got.Schema == nil || eng.got.Schema["maxItems"] != 5 || !strings.Contains(eng.got.System, "schema given") {
 		t.Fatalf("request = %+v", eng.got)
 	}
 	if err := game.NewStore(db).SetSettings(ctx, g.ID, game.Settings{Voice: "third person, past, spare"}); err != nil {
@@ -153,12 +152,16 @@ func TestRoll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Model != "m" || p.Request.Prefill != "MARA:\n" || !strings.HasPrefix(p.Rendered.Prompt, "<PLACES") {
+	if p.Model != "m" || p.Request.Schema == nil || !strings.HasPrefix(p.Rendered.Prompt, "<PLACES") {
 		t.Fatalf("preview = %+v", p)
 	}
 
-	eng.reply = "MARA:\n"
+	eng.reply = "[]"
 	if _, err := roller.Roll(ctx, g.ID, th.ID, sc2.ID, mara.ID, nil); !errors.Is(err, play.ErrEmpty) {
 		t.Fatalf("empty reply: err = %v", err)
+	}
+	eng.reply = "MARA:\n(does not look up)\n"
+	if _, err := roller.Roll(ctx, g.ID, th.ID, sc2.ID, mara.ID, nil); err == nil || !strings.Contains(err.Error(), "outside the schema") {
+		t.Fatalf("line-form reply: err = %v", err)
 	}
 }

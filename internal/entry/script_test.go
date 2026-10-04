@@ -1,39 +1,23 @@
 package entry
 
-import (
-	"reflect"
-	"strings"
-	"testing"
-)
+import "testing"
 
-func TestScriptRoundTrip(t *testing.T) {
-	in := "(sets a cup down)\n\"You said three days.\"\n\n`I cannot lie for her.`\nRain on the shutters.\n\"unterminated\n"
-	want := []Segment{
+func TestFormatScript(t *testing.T) {
+	got := FormatScript([]Segment{
 		{Kind: Action, Text: "sets a cup down"},
 		{Kind: Speech, Text: "You said three days."},
 		{Kind: Thought, Text: "I cannot lie for her."},
 		{Kind: Narration, Text: "Rain on the shutters."},
-		{Kind: Speech, Text: "unterminated"},
-	}
-	got := ParseScript(in)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("parse = %+v\nwant %+v", got, want)
-	}
-	if again := ParseScript(FormatScript(got)); !reflect.DeepEqual(again, want) {
-		t.Fatalf("round trip = %+v", again)
-	}
-	if ParseScript("  \n\n") != nil {
-		t.Fatal("blank input should parse to nothing")
+	})
+	if got != "(sets a cup down)\n\"You said three days.\"\n`I cannot lie for her.`\nRain on the shutters." {
+		t.Fatalf("format = %q", got)
 	}
 }
 
-func TestGrammar(t *testing.T) {
-	if !strings.HasPrefix(Grammar, "root ::= line (line (line (line line?)?)?)?\n") {
-		t.Fatalf("grammar root: %s", Grammar)
-	}
-	for _, rule := range []string{"action ::=", "speech ::=", "thought ::=", "narration ::="} {
-		if !strings.Contains(Grammar, rule) {
-			t.Fatalf("grammar missing %s:\n%s", rule, Grammar)
-		}
+func TestSchema(t *testing.T) {
+	s := Schema()
+	items, _ := s["items"].(map[string]any)
+	if s["type"] != "array" || s["maxItems"] != 5 || items == nil || items["additionalProperties"] != false {
+		t.Fatalf("schema = %+v", s)
 	}
 }

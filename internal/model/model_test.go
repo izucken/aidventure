@@ -64,4 +64,14 @@ func TestStore(t *testing.T) {
 	if got, _ := models.Get(ctx, hosted.ID); got.Key != "sk-or-1" || got.Model != "z-ai/glm-5" {
 		t.Fatalf("after keyless update = %+v", got)
 	}
+	if _, err := models.Copy(ctx, "nope"); !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("copy unknown: err = %v", err)
+	}
+	copied, err := models.Copy(ctx, hosted.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if copied.ID == hosted.ID || copied.Name != "GLM copy" || copied.Key != "sk-or-1" || copied.Model != "z-ai/glm-5" || copied.Engine != model.OpenRouter {
+		t.Fatalf("copy = %+v", copied)
+	}
 }

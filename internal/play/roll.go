@@ -5,6 +5,7 @@ package play
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -122,13 +123,12 @@ func (r *Roller) perform(ctx context.Context, gameID, threadID, sceneID, actorID
 		"prompt_time", res.PromptTime,
 		"generate_time", res.GenerateTime,
 	)
-	segments := entry.ParseScript(res.Text)
-	// A thinking model writes its own cue line, since none was prefilled.
-	if len(segments) > 0 && segments[0].Kind == entry.Narration && strings.TrimSpace(segments[0].Text) == strings.TrimSpace(cue(a.actor)) {
-		segments = segments[1:]
+	var segments []entry.Segment
+	if err := json.Unmarshal([]byte(strings.TrimSpace(res.Text)), &segments); err != nil {
+		return Result{}, fmt.Errorf("%s answered outside the schema: %v: %q", a.actor.Name, err, res.Text)
 	}
 	if len(segments) == 0 {
-		return Result{}, fmt.Errorf("%w: %s answered %q", ErrEmpty, a.actor.Name, res.Text)
+		return Result{}, fmt.Errorf("%w: %s", ErrEmpty, a.actor.Name)
 	}
 	var out Result
 	if dir.Type == entry.Narrative {
@@ -234,13 +234,13 @@ func (r *Roller) prepare(ctx context.Context, gameID, threadID, sceneID, actorID
 	return asking{model: m, eng: eng, req: render(actor, ask, scenes, subjects, entries, links, byID, told.Voice), actor: actor, scene: scenes[at]}, nil
 }
 
-const system = `You write for one actor, the one named, and for nobody else. Write only the next entry, in the line form, from that actor's point of view.
+const system = `You write for one actor, the one named, and for nobody else. Write only the next entry, from that actor's point of view, as JSON in the schema given: one to five beats, each a kind and a text.
 
-Beats, one line each:
-(action) what the actor does
-"speech" what the actor says aloud
-` + "`thought`" + ` what the actor thinks, unheard by anyone
-a plain line is narration from the actor's point of view
+The kinds:
+action     what the actor does
+speech     what the actor says aloud
+thought    what the actor thinks, unheard by anyone
+narration  what is seen, from the actor's point of view
 
 Write what the moment needs, usually a line or three, and stop. Do not plan or count lines.
 Never write for other actors, and never decide what they do or say.
@@ -262,10 +262,9 @@ func render(actor subject.Subject, ask string, scenes []scene.Scene, subjects []
 		brief += "\nNarration lines are written in this voice: " + voice
 	}
 	return llm.Request{
-		System:  brief,
-		User:    b.String(),
-		Prefill: cue(actor),
-		Grammar: entry.Grammar,
+		System: brief,
+		User:   b.String(),
+		Schema: entry.Schema(),
 	}
 }
 

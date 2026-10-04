@@ -30,7 +30,7 @@ type scripted string
 
 func (s scripted) Complete(_ context.Context, req llm.Request) (llm.Response, error) {
 	if strings.HasPrefix(req.System, "You decide where") {
-		return llm.Response{Text: "narrative\nnext Mara\n"}, nil
+		return llm.Response{Text: `{"move":"narrative","place":null,"newPlace":null,"with":[],"into":null,"next":"Mara"}`}, nil
 	}
 	if req.Stream != nil {
 		req.Stream("text", string(s))
@@ -39,7 +39,7 @@ func (s scripted) Complete(_ context.Context, req llm.Request) (llm.Response, er
 }
 
 func (scripted) Render(_ context.Context, req llm.Request) (llm.Rendered, error) {
-	return llm.Rendered{Prompt: req.User, Grammar: req.Grammar}, nil
+	return llm.Rendered{Prompt: req.User}, nil
 }
 
 func newServer(t *testing.T, db *sql.DB) *httptest.Server {
@@ -55,7 +55,7 @@ func newServer(t *testing.T, db *sql.DB) *httptest.Server {
 	}
 	deps.Roller = &play.Roller{
 		DB: db, Models: deps.Models, Threads: deps.Threads, Subjects: deps.Subjects, Scenes: deps.Scenes, Entries: deps.Entries,
-		Engine: func(model.Model) (llm.Engine, error) { return scripted("\"Rolled.\"\n"), nil },
+		Engine: func(model.Model) (llm.Engine, error) { return scripted(`[{"kind":"speech","text":"Rolled."}]`), nil },
 		Log:    slog.Default(),
 	}
 	return httptest.NewServer(httpserver.New(slog.Default(), http.NotFoundHandler(), deps))
@@ -519,6 +519,12 @@ func TestModelsFlow(t *testing.T) {
 	}
 	if status, body := call("GET", "/api/models", ""); status != http.StatusOK || strings.Contains(body, "sk-or-1") {
 		t.Fatalf("list leaks key: %d %s", status, body)
+	}
+	if status, body := call("POST", "/api/models/nope/copy", ""); status != http.StatusNotFound {
+		t.Fatalf("copy unknown model: %d %s", status, body)
+	}
+	if status, body := call("POST", "/api/models/"+m.ID+"/copy", ""); status != http.StatusCreated || !strings.Contains(body, `"name":"Gemma copy"`) {
+		t.Fatalf("copy model: %d %s", status, body)
 	}
 }
 

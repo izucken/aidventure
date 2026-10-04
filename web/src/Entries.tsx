@@ -311,7 +311,10 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
             .map((entry) => (
               <Fragment key={entry.id}>
                 {entry.type === "present" || entry.type === "enter" || entry.type === "exit" ? (
-                  <article className={`${styles.entry} ${styles.presence} ${deletable.deletable}`}>
+                  <article
+                    className={`${styles.entry} ${styles.presence} ${deletable.deletable}`}
+                    data-interactive={entry.type !== "present" ? "" : undefined}
+                  >
                     <p>
                       {entry.type === "present" ? "Present: " : entry.type === "enter" ? "Enter " : "Exit "}
                       {(entry.actors ?? []).map(nameOf).join(", ") || "nobody"}
@@ -324,7 +327,7 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
                     )}
                   </article>
                 ) : entry.type === "direction" ? (
-                  <article className={`${styles.entry} ${styles.direction} ${deletable.deletable}`}>
+                  <article className={`${styles.entry} ${styles.direction} ${deletable.deletable}`} data-interactive="">
                     <h4 className={styles.cue}>
                       {director || "Director"}
                       {entry.think && (
@@ -537,15 +540,13 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
           <>
             <h4>Prompt, after the model's template</h4>
             <pre>{preview.rendered.prompt}</pre>
-            <h4>Grammar, as sent</h4>
-            <pre>{preview.rendered.grammar}</pre>
+            <h4>Schema, as sent</h4>
+            <pre>{preview.rendered.schema || "(none)"}</pre>
             <h4>Request parts</h4>
             <h5>System</h5>
             <pre>{preview.request.System}</pre>
             <h5>User</h5>
             <pre>{preview.request.User}</pre>
-            <h5>Prefill</h5>
-            <pre>{preview.request.Prefill || "(none)"}</pre>
           </>
         )}
       </Modal>

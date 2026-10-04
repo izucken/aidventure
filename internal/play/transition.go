@@ -86,8 +86,9 @@ func cut(ctx context.Context, tx *sql.Tx, gameID, threadID string, t Transition)
 	if len(t.Direction.Cast) == 0 {
 		return Result{}, fmt.Errorf("%w: cast is empty", ErrBadTransition)
 	}
-	// The first scene of a thread leaves nothing; later ones leave the current
-	// place, and everyone in it exits.
+	// The first scene of a thread leaves nothing. Later ones leave the current
+	// place, and those who cross into the new scene exit it; the rest may stay or
+	// go somewhere, just not here, and the record says nothing of them.
 	var left scene.Scene
 	if sc, err := scene.Latest(ctx, tx, gameID, threadID); err == nil {
 		left = sc
@@ -98,8 +99,14 @@ func cut(ctx context.Context, tx *sql.Tx, gameID, threadID string, t Transition)
 	if err != nil {
 		return Result{}, err
 	}
-	if len(left.Cast) > 0 {
-		if _, err := entry.InsertPresence(ctx, tx, gameID, left.ID, entry.Exit, left.Cast); err != nil {
+	var crossing []string
+	for _, id := range left.Cast {
+		if slices.Contains(t.Direction.Cast, id) {
+			crossing = append(crossing, id)
+		}
+	}
+	if len(crossing) > 0 {
+		if _, err := entry.InsertPresence(ctx, tx, gameID, left.ID, entry.Exit, crossing); err != nil {
 			return Result{}, err
 		}
 	}

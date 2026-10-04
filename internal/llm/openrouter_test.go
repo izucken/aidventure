@@ -38,19 +38,29 @@ func TestOpenRouterComplete(t *testing.T) {
 	defer srv.Close()
 	client := NewOpenRouter(srv.URL+"/", "sk-or-1", "z-ai/glm", true, 500)
 
-	res, err := client.Complete(t.Context(), Request{System: "sys", User: "script", Prefill: "MARA:\n", Grammar: "root ::= \"x\""})
+	res, err := client.Complete(t.Context(), Request{System: "sys", User: "script", Schema: map[string]any{"type": "string"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Text != "\"Hello.\"\n" || res.Think != "She is stalling." || res.PromptTokens != 40 || res.CachedTokens != 30 || res.Tokens != 7 {
 		t.Fatalf("res = %+v", res)
 	}
-	if auth != "Bearer sk-or-1" || got["model"] != "z-ai/glm" || got["grammar"] != nil {
+	if auth != "Bearer sk-or-1" || got["model"] != "z-ai/glm" {
 		t.Fatalf("request = %+v auth %q", got, auth)
+	}
+	format, _ := got["response_format"].(map[string]any)
+	if format["type"] != "json_schema" || format["json_schema"].(map[string]any)["strict"] != true || format["json_schema"].(map[string]any)["schema"].(map[string]any)["type"] != "string" {
+		t.Fatalf("response_format = %+v", format)
+	}
+	if provider, _ := got["provider"].(map[string]any); provider["require_parameters"] != true {
+		t.Fatalf("provider = %+v", got["provider"])
 	}
 	reasoning, _ := got["reasoning"].(map[string]any)
 	if reasoning["enabled"] != true || reasoning["max_tokens"] != float64(500) {
 		t.Fatalf("reasoning = %+v", reasoning)
+	}
+	if got["max_tokens"] != float64(answerRoom+500) {
+		t.Fatalf("max_tokens = %v", got["max_tokens"])
 	}
 	msgs, _ := got["messages"].([]any)
 	if len(msgs) != 2 || msgs[1].(map[string]any)["content"] != "script" {
@@ -68,13 +78,13 @@ func TestOpenRouterComplete(t *testing.T) {
 	if strings.Join(parts, "|") != "think:She is |think:stalling.|text:MARA:\n|text:\"Hello.\"\n" {
 		t.Fatalf("parts = %q", parts)
 	}
-	if r, _ := client.Render(t.Context(), Request{System: "s", User: "u"}); !strings.HasPrefix(r.Prompt, "SYSTEM\ns\n\nUSER\nu") || r.Grammar != "" {
+	if r, _ := client.Render(t.Context(), Request{System: "s", User: "u"}); !strings.HasPrefix(r.Prompt, "SYSTEM\ns\n\nUSER\nu") || r.Schema != "" {
 		t.Fatalf("render = %+v", r)
 	}
 	if _, err := NewOpenRouter(srv.URL, "", "z-ai/glm", false, 0).Complete(t.Context(), Request{}); err != nil {
 		t.Fatal(err)
 	}
-	if got["reasoning"] != nil {
+	if got["reasoning"] != nil || got["response_format"] != nil || got["provider"] != nil || got["max_tokens"] != float64(answerRoom) {
 		t.Fatalf("thinking off still asks for reasoning: %+v", got)
 	}
 }

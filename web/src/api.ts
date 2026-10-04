@@ -57,8 +57,8 @@ export type Outcome = Partial<Result> & { directed?: Entry; turn?: Turn };
 export type PlayEvent = { phase: "direct" | "entry"; part: "think" | "text"; delta: string };
 export type Preview = {
   model: string;
-  request: { System: string; User: string; Prefill: string; Grammar: string };
-  rendered: { prompt: string; grammar: string };
+  request: { System: string; User: string; Schema: Record<string, unknown> | null };
+  rendered: { prompt: string; schema: string };
 };
 export type Kind = "narration" | "action" | "speech" | "thought";
 export type Segment = { kind: Kind; text: string; to?: string };
@@ -104,6 +104,7 @@ export const api = {
   models: () => request<Model[]>("GET", "/api/models"),
   createModel: (input: ModelInput) => request<Model>("POST", "/api/models", input),
   updateModel: (id: string, input: ModelInput) => request<void>("PUT", `/api/models/${id}`, input),
+  copyModel: (id: string) => request<Model>("POST", `/api/models/${id}/copy`),
   currentModel: async () => (await request<{ modelId: string | null }>("GET", "/api/models/selection")).modelId,
   selectModel: (modelId: string) => request<void>("PUT", "/api/models/selection", { modelId }),
 

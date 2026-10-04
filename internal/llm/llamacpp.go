@@ -15,7 +15,9 @@ import (
 
 // LlamaCpp talks to llama-server. The prompt is rendered by the server from
 // the model's own chat template, so no turn markup lives here; completion
-// goes through the native /completion route for grammars and cache control.
+// goes through the native /completion route for schemas and cache control.
+// A thinking model answers in two completions: the thought, stopped at the
+// close marker, then the answer from the thought on, under the schema.
 type LlamaCpp struct {
 	endpoint string
 	think    bool
@@ -42,53 +44,34 @@ type message struct {
 }
 
 func (c *LlamaCpp) Render(ctx context.Context, req Request) (Rendered, error) {
-	body, _, err := c.prepare(ctx, req)
+	prompt, err := c.prompt(ctx, req)
 	if err != nil {
 		return Rendered{}, err
 	}
-	grammar, _ := body["grammar"].(string)
-	if c.budgeted() {
-		grammar = req.Grammar // the answer binds plainly, in a call of its own after the thought
-	}
-	return Rendered{Prompt: body["prompt"].(string), Grammar: grammar}, nil
+	return Rendered{Prompt: prompt, Schema: schemaText(req.Schema)}, nil
 }
-
-func (c *LlamaCpp) budgeted() bool { return c.think && c.budget > 0 }
 
 func (c *LlamaCpp) Complete(ctx context.Context, req Request) (Response, error) {
-	if c.budgeted() {
-		return c.completeBudgeted(ctx, req)
-	}
-	body, marks, err := c.prepare(ctx, req)
+	prompt, err := c.prompt(ctx, req)
 	if err != nil {
 		return Response{}, err
 	}
-	out, err := c.run(ctx, body, marks, c.think, req.Stream)
-	if err != nil {
-		return Response{}, err
-	}
-	res := out.response()
-	if c.think {
-		if think, text, ok := strings.Cut(out.Content, marks.close); ok {
-			res.Think = marks.thought(think)
-			res.Text = text
+	if !c.think {
+		out, err := c.run(ctx, c.answer(prompt, req.Schema), thinkMarkers{}, false, req.Stream)
+		if err != nil {
+			return Response{}, err
 		}
+		return out.response(), nil
 	}
-	return res, nil
-}
-
-// completeBudgeted runs the thought and the answer as two completions. The
-// thought runs under the token budget and stops at the close marker; the
-// answer runs from the thought and the marker, under the grammar, and rides
-// the prefix cache. A thought the budget cut short gets the wrap-up line
-// first, so the answer follows a finished sentence.
-func (c *LlamaCpp) completeBudgeted(ctx context.Context, req Request) (Response, error) {
-	body, marks, err := c.prepare(ctx, req)
+	marks, err := c.thinkMarkers(ctx)
 	if err != nil {
 		return Response{}, err
 	}
-	prompt := body["prompt"].(string)
-	thought, err := c.run(ctx, map[string]any{"prompt": prompt, "n_predict": c.budget, "cache_prompt": true, "stop": []string{marks.close}}, marks, true, req.Stream)
+	thinking := map[string]any{"prompt": prompt, "n_predict": -1, "cache_prompt": true, "stop": []string{marks.close}}
+	if c.budget > 0 {
+		thinking["n_predict"] = c.budget
+	}
+	thought, err := c.run(ctx, thinking, marks, true, req.Stream)
 	if err != nil {
 		return Response{}, err
 	}
@@ -104,11 +87,7 @@ func (c *LlamaCpp) completeBudgeted(ctx context.Context, req Request) (Response,
 			req.Stream("think", wrapUp)
 		}
 	}
-	answer := map[string]any{"prompt": prompt + tail + marks.close, "n_predict": -1, "cache_prompt": true}
-	if req.Grammar != "" {
-		answer["grammar"] = req.Grammar
-	}
-	out, err := c.run(ctx, answer, marks, false, req.Stream)
+	out, err := c.run(ctx, c.answer(prompt+tail+marks.close, req.Schema), marks, false, req.Stream)
 	if err != nil {
 		return Response{}, err
 	}
@@ -120,6 +99,20 @@ func (c *LlamaCpp) completeBudgeted(ctx context.Context, req Request) (Response,
 	return res, nil
 }
 
+// prompt renders the request through the model's chat template.
+func (c *LlamaCpp) prompt(ctx context.Context, req Request) (string, error) {
+	return c.applyTemplate(ctx, []message{{"system", req.System}, {"user", req.User}}, c.think)
+}
+
+// answer is the body of the completion that writes the answer, under the schema when there is one.
+func (c *LlamaCpp) answer(prompt string, schema map[string]any) map[string]any {
+	body := map[string]any{"prompt": prompt, "n_predict": -1, "cache_prompt": true}
+	if schema != nil {
+		body["json_schema"] = schema
+	}
+	return body
+}
+
 // run is one /completion call, streamed to sink when there is one.
 func (c *LlamaCpp) run(ctx context.Context, body map[string]any, marks thinkMarkers, think bool, sink func(part, delta string)) (completion, error) {
 	if sink != nil {
@@ -129,42 +122,6 @@ func (c *LlamaCpp) run(ctx context.Context, body map[string]any, marks thinkMark
 	var out completion
 	err := c.post(ctx, "/completion", body, &out)
 	return out, err
-}
-
-// prepare builds the /completion body: the templated prompt, and the grammar,
-// wrapped for lazy use when the model thinks.
-func (c *LlamaCpp) prepare(ctx context.Context, req Request) (map[string]any, thinkMarkers, error) {
-	msgs := []message{{"system", req.System}, {"user", req.User}}
-	if !c.think && req.Prefill != "" {
-		msgs = append(msgs, message{"assistant", req.Prefill})
-	}
-	prompt, err := c.applyTemplate(ctx, msgs, c.think)
-	if err != nil {
-		return nil, thinkMarkers{}, err
-	}
-	body := map[string]any{
-		"prompt":       prompt,
-		"n_predict":    -1,
-		"cache_prompt": true,
-	}
-	var marks thinkMarkers
-	if c.think {
-		if marks, err = c.thinkMarkers(ctx); err != nil {
-			return nil, thinkMarkers{}, err
-		}
-	}
-	if req.Grammar != "" {
-		body["grammar"] = req.Grammar
-		if c.think {
-			// Grammar waits until the thought block closes, then binds the answer.
-			// The trigger text is fed to the grammar, so the root must consume it.
-			body["grammar"] = "root ::= \"" + marks.close + "\" answer\n" + strings.Replace(req.Grammar, "root ::=", "answer ::=", 1)
-			body["grammar_lazy"] = true
-			body["grammar_triggers"] = []map[string]any{{"type": 1, "value": marks.close}}
-			body["preserved_tokens"] = []string{marks.close}
-		}
-	}
-	return body, marks, nil
 }
 
 // completion is llama-server's /completion answer, final chunk included when streaming.
@@ -196,6 +153,15 @@ func (out completion) response() Response {
 }
 
 func ms(v float64) time.Duration { return time.Duration(v * float64(time.Millisecond)) }
+
+// schemaText is the schema as it is sent, for the preview; empty when there is none.
+func schemaText(schema map[string]any) string {
+	if schema == nil {
+		return ""
+	}
+	b, _ := json.MarshalIndent(schema, "", "  ")
+	return string(b)
+}
 
 // stream reads llama-server's event stream, hands each delta to sink as
 // thought or text, and returns the whole completion as if it had not streamed.
@@ -247,9 +213,9 @@ func (c *LlamaCpp) stream(ctx context.Context, body map[string]any, marks thinkM
 	return last, nil
 }
 
-// splitter routes streamed deltas to thought or text. Before the close marker
-// it holds back a marker's worth of tail so a marker split across chunks is
-// still caught; the thought's opening marker and preamble are dropped.
+// splitter routes streamed deltas to thought or text. A thought's opening
+// marker and preamble are dropped; a close marker, should the server let one
+// through, ends the thought.
 type splitter struct {
 	marks   thinkMarkers
 	think   bool

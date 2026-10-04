@@ -145,6 +145,17 @@ func (in *Input) validate() error {
 	return nil
 }
 
+// Copy makes a new entry from an existing one, key and all, named after it.
+func (s *Store) Copy(ctx context.Context, id string) (Model, error) {
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return Model{}, err
+	}
+	in := m.Input
+	in.Name += " copy"
+	return s.Create(ctx, in)
+}
+
 func (s *Store) Get(ctx context.Context, id string) (Model, error) {
 	var m Model
 	var created string
