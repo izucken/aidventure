@@ -1,0 +1,29 @@
+@layer components {
+  /* One column at a reading width, the same on every view, so nothing jumps. */
+  .layout {
+    max-width: 64rem;
+    margin: 0 auto;
+    padding: 1rem 2rem 4rem;
+  }
+
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .gameName {
+    margin: 0;
+    font-size: 1.6em;
+  }
+
+  .views {
+    display: flex;
+    gap: 0.3rem;
+  }
+
+  .views [aria-pressed="true"] {
+    background: color-mix(in srgb, currentColor 15%, transparent);
+  }
+}

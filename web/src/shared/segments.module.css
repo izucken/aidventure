@@ -1,0 +1,25 @@
+/* How the four segment kinds read, in the script and in the editor preview. */
+@layer components {
+  .narration,
+  .action,
+  .speech,
+  .thought {
+    margin: 0.2rem 0;
+  }
+
+  .action {
+    font-style: italic;
+  }
+
+  .speech::before {
+    content: "“";
+  }
+
+  .speech::after {
+    content: "”";
+  }
+
+  .thought {
+    opacity: 0.7;
+  }
+}

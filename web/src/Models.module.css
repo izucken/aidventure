@@ -1,0 +1,22 @@
+@layer components {
+  .form {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+
+  .use {
+    position: absolute;
+    top: 0.3rem;
+    right: 0.3rem;
+    font-size: 0.8em;
+  }
+
+  .item {
+    position: relative;
+  }
+}

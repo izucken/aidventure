@@ -1,0 +1,19 @@
+@layer components {
+  .editor {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.6rem;
+  }
+
+  .editor textarea {
+    font-family: inherit;
+    resize: vertical;
+  }
+
+  .preview {
+    padding: 0.3rem 0.6rem;
+    border: 1px dashed color-mix(in srgb, currentColor 30%, transparent);
+    border-radius: 0.3rem;
+    min-height: 3rem;
+  }
+}

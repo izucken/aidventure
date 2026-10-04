@@ -1,0 +1,204 @@
+@layer components {
+  .entry {
+    margin: 1rem 0;
+    padding: 0.3rem 0.6rem;
+    border-radius: 0.3rem;
+    cursor: pointer;
+  }
+
+  .editing {
+    cursor: default;
+  }
+
+  .cue {
+    margin: 0 0 0.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.85em;
+  }
+
+  /* The gap between entries: nothing until the pointer is on it, then a line with a + to insert at. */
+  .gap {
+    position: relative;
+    height: 0.9rem;
+    margin: -0.45rem 0;
+    cursor: pointer;
+  }
+
+  .gap::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: 0;
+    left: 0;
+    border-top: 1px dashed color-mix(in srgb, currentColor 35%, transparent);
+    opacity: 0;
+  }
+
+  .gap > span {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    padding: 0 0.4rem;
+    transform: translate(-50%, -50%);
+    background: Canvas;
+    font-weight: 600;
+    line-height: 1;
+    opacity: 0;
+  }
+
+  .gap:hover::before,
+  .gap:hover > span,
+  .gap:focus-visible::before,
+  .gap:focus-visible > span {
+    opacity: 1;
+  }
+
+  /* Who is there reads as a stage line, not a beat. */
+  .presence {
+    font-size: 0.9em;
+    font-style: italic;
+    opacity: 0.8;
+    cursor: default;
+  }
+
+  /* The director's entry reads as an aside, not a beat. */
+  .direction {
+    border-left: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+    font-size: 0.9em;
+    opacity: 0.85;
+    cursor: default;
+  }
+
+  .move {
+    margin-left: 0.5rem;
+    padding: 0 0.35rem;
+    border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+    border-radius: 0.3rem;
+    font-size: 0.8em;
+    letter-spacing: 0.08em;
+    opacity: 0.75;
+  }
+
+  .thinkToggle {
+    margin-left: 0.4rem;
+    padding: 0 0.3rem;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    opacity: 0.6;
+  }
+
+  .thinkToggle:hover {
+    opacity: 1;
+  }
+
+  .think {
+    white-space: pre-wrap;
+    font-family: inherit;
+    font-size: 0.95em;
+    line-height: 1.5;
+  }
+
+  .scene {
+    margin-top: 1.5rem;
+  }
+
+  .slug {
+    margin: 0 0 0.5rem;
+    padding: 0.3rem 2rem 0.3rem 0.4rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.95em;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .place {
+    margin-left: 0.6rem;
+    font-weight: 400;
+    text-transform: none;
+    letter-spacing: normal;
+    opacity: 0.7;
+  }
+
+  .slug::-webkit-details-marker {
+    display: none;
+  }
+
+  .slug::before {
+    content: "▸";
+    display: inline-block;
+    width: 1rem;
+    transition: transform 0.15s;
+  }
+
+  .scene[open] > .slug::before {
+    transform: rotate(90deg);
+  }
+
+  .n {
+    display: inline-block;
+    min-width: 1.5rem;
+    opacity: 0.5;
+  }
+
+  .present {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.2rem 0.8rem;
+    margin: -0.2rem 0 0.6rem;
+    font-size: 0.85em;
+    opacity: 0.8;
+  }
+
+  .present > span {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0.7;
+  }
+
+  .turn {
+    margin: 1rem 0 0;
+    padding: 0.4rem 0.8rem;
+    border-left: 3px solid currentColor;
+  }
+
+  .turn p {
+    margin: 0;
+    font-weight: 600;
+  }
+
+  .live {
+    margin: 1rem 0;
+    padding: 0.5rem 0.8rem;
+    border: 1px dashed color-mix(in srgb, currentColor 35%, transparent);
+    border-radius: 0.3rem;
+  }
+
+  .liveCancel {
+    margin-left: 0.8rem;
+    font-size: 0.8em;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .liveThink {
+    max-height: 12rem;
+    overflow-y: auto;
+    margin: 0.3rem 0 0.6rem;
+    padding: 0.4rem 0.6rem;
+    border-left: 3px solid color-mix(in srgb, currentColor 30%, transparent);
+    white-space: pre-wrap;
+    font-family: inherit;
+    font-size: 0.85em;
+    opacity: 0.7;
+  }
+
+  .debug {
+    margin-left: auto;
+    opacity: 0.7;
+  }
+}

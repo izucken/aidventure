@@ -1,0 +1,7 @@
+.git
+.idea
+.env
+bin
+web/node_modules
+web/dist
+internal/ui/static/dist

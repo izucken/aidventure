@@ -1,0 +1,28 @@
+/* An entity with a delete control in its corner, shown while hovered. The
+   entity positions; the control has a fixed size everywhere. */
+@layer components {
+  .deletable {
+    position: relative;
+  }
+
+  .delete {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    line-height: 1.5rem;
+    text-align: center;
+    visibility: hidden;
+    background: none;
+    border: 0;
+    color: #c33;
+    font-size: 1.1em;
+    cursor: pointer;
+  }
+
+  .deletable:hover > .delete {
+    visibility: visible;
+  }
+}

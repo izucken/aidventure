@@ -1,0 +1,31 @@
+@layer components {
+  .trigger {
+    padding: 0.2rem 0.5rem;
+    background: none;
+    border: 0;
+    color: inherit;
+    font-size: 1.3em;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.6;
+  }
+
+  .trigger:hover {
+    opacity: 1;
+  }
+
+  .form {
+    display: grid;
+    gap: 0.6rem;
+  }
+
+  .form label {
+    display: grid;
+    gap: 0.3rem;
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+}

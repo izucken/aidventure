@@ -1,0 +1,25 @@
+/* Controls that are not part of the work live in the top right corner, out of
+   sight until the pointer comes near; the corner itself is the hover area, so
+   they can be found. */
+@layer components {
+  .corner {
+    position: fixed;
+    top: 0;
+    right: 0;
+    display: flex;
+    gap: 0.2rem;
+    padding: 0.6rem;
+  }
+
+  .trigger {
+    opacity: 0;
+    font-size: 1.3em;
+    line-height: 1;
+    transition: opacity 0.15s;
+  }
+
+  .corner:hover .trigger,
+  .trigger:focus-visible {
+    opacity: 1;
+  }
+}

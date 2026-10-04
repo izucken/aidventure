@@ -1,0 +1,54 @@
+# Development only. Production is the Dockerfile.
+# Every service carries the memory/cpu limits this machine needs; keep them.
+services:
+  api:
+    image: golang:1.27.1-alpine
+    user: "${UID}:${GID}"
+    working_dir: /src
+    # Built then run, not go run: data lives next to the binary (adr/2), and a
+    # go run binary lives in a temp dir.
+    command: sh -c "go build -o bin/dev/aidventure ./cmd/aidventure && exec bin/dev/aidventure"
+    environment:
+      AIDVENTURE_ADDR: ":8080"
+      AIDVENTURE_UI_DEV_SERVER: http://web:5173
+      # The container user has no home, so Go needs an explicit cache location.
+      GOCACHE: /go/.cache/go-build
+      GOTOOLCHAIN: local
+      CGO_ENABLED: "0"
+      GOFLAGS: -buildvcs=false
+    volumes:
+      - .:/src
+      - gomod:/go
+    ports:
+      - "8080:8080"
+    depends_on:
+      - web
+    develop:
+      watch:
+        - path: ./cmd
+          action: restart
+        - path: ./internal
+          action: restart
+          ignore:
+            - ui/static/dist
+        - path: ./go.mod
+          action: restart
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 2
+
+  web:
+    image: node:24.10
+    user: "${UID}:${GID}"
+    working_dir: /src/web
+    command: npm run dev
+    volumes:
+      - .:/src
+    expose:
+      - "5173"
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 2
+
+volumes:
+  gomod:

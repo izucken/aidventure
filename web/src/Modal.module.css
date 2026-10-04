@@ -1,0 +1,56 @@
+@layer components {
+  .modal {
+    width: min(60rem, 92vw);
+    max-height: 90vh;
+    padding: 0;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+    border-radius: 0.5rem;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .narrow {
+    width: min(32rem, 90vw);
+  }
+
+  .modal::backdrop {
+    background: rgb(0 0 0 / 0.4);
+  }
+
+  .header {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.8rem 1.5rem;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    background: Canvas;
+  }
+
+  .header h3 {
+    margin: 0;
+  }
+
+  .close {
+    padding: 0 0.5rem;
+    background: none;
+    border: 0;
+    color: inherit;
+    font-size: 1.4em;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .body {
+    padding: 1rem 1.5rem 1.5rem;
+  }
+
+  .body pre {
+    white-space: pre-wrap;
+    padding: 0.6rem 0.8rem;
+    border-radius: 0.3rem;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    font-size: 0.85em;
+  }
+}

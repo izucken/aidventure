@@ -1,0 +1,31 @@
+/* Theme root and the universal rules. Everything else lives in a component's
+   CSS module. Component modules wrap their rules in @layer components, so
+   the unlayered rules here win regardless of selector weight. */
+@layer components;
+
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+/* Anything interactive highlights under the pointer, a current item a step
+   stronger. Native form controls keep their own background, since a tinted
+   select bleeds into its option popup; they highlight by outline. */
+:is(button, [role="button"], a, summary, label):not(:disabled):hover,
+[data-interactive]:hover {
+  background-color: color-mix(in srgb, currentColor 10%, transparent);
+  border-radius: 0.3rem;
+}
+
+:is(button, [role="button"], a, li, [data-interactive]):not(:disabled)[aria-current]:hover {
+  background-color: color-mix(in srgb, currentColor 22%, transparent);
+}
+
+:is(select, input, textarea):not(:disabled):hover {
+  outline: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+  outline-offset: 1px;
+}

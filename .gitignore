@@ -1,0 +1,14 @@
+# local machine settings for compose (uid/gid)
+.env
+
+# build output
+/bin/
+/internal/ui/static/dist/
+/web/dist/
+
+# dependencies
+/web/node_modules/
+
+
+# IDE
+.idea
