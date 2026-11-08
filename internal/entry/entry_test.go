@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"aidventure/internal/entry"
@@ -59,23 +60,23 @@ func TestStore(t *testing.T) {
 	if _, err := entries.Append(ctx, g.ID, th.ID, sc.ID, innkeeper.ID, "", say); !errors.Is(err, entry.ErrNotPresent) {
 		t.Fatalf("beat before the head: err = %v", err)
 	}
-	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{innkeeper.ID}); !errors.Is(err, entry.ErrInvalid) {
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{innkeeper.ID}, ""); !errors.Is(err, entry.ErrInvalid) {
 		t.Fatalf("enter before the head: err = %v", err)
 	}
-	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Present, []string{tavern.ID}); !errors.Is(err, entry.ErrNotActor) {
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Present, []string{tavern.ID}, ""); !errors.Is(err, entry.ErrNotActor) {
 		t.Fatalf("tavern present: err = %v", err)
 	}
-	head, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Present, []string{innkeeper.ID})
+	head, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Present, []string{innkeeper.ID}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if head.Seq != 1 || head.Type != entry.Present || len(head.Actors) != 1 {
 		t.Fatalf("head = %+v", head)
 	}
-	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Present, nil); !errors.Is(err, entry.ErrInvalid) {
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Present, nil, ""); !errors.Is(err, entry.ErrInvalid) {
 		t.Fatalf("second head: err = %v", err)
 	}
-	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, nil); !errors.Is(err, entry.ErrInvalid) {
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, nil, ""); !errors.Is(err, entry.ErrInvalid) {
 		t.Fatalf("exit of nobody: err = %v", err)
 	}
 
@@ -97,7 +98,7 @@ func TestStore(t *testing.T) {
 	if _, err := entries.Append(ctx, g.ID, th.ID, sc.ID, mara.ID, "", say); !errors.Is(err, entry.ErrNotPresent) {
 		t.Fatalf("absent actor: err = %v", err)
 	}
-	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{mara.ID}); err != nil {
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{mara.ID}, ""); err != nil {
 		t.Fatal(err)
 	}
 	nobody := "nope"
@@ -173,7 +174,7 @@ func TestStore(t *testing.T) {
 
 	// Presence is read at the point of insertion: after Mara leaves she cannot
 	// speak at the end, but can where she was still there.
-	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, []string{mara.ID}); err != nil {
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, []string{mara.ID}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := entries.Append(ctx, g.ID, th.ID, sc.ID, mara.ID, "", say); !errors.Is(err, entry.ErrNotPresent) {
@@ -214,5 +215,93 @@ func TestStore(t *testing.T) {
 	}
 	if count() != 5 {
 		t.Fatalf("after passing = %d entries", count())
+	}
+}
+
+// Staging lines go where the author puts them and must agree with the script
+// there; an enter a later beat stands on cannot be pulled out from under it.
+func TestStaging(t *testing.T) {
+	ctx := t.Context()
+	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	g, _ := game.NewStore(db).Create(ctx, "game")
+	th, _ := thread.NewStore(db).Create(ctx, g.ID, "thread")
+	subjects := subject.NewStore(db)
+	tavern, _ := subjects.Create(ctx, g.ID, subject.Input{Name: "Tavern", Scene: true})
+	innkeeper, _ := subjects.Create(ctx, g.ID, subject.Input{Name: "Innkeeper", Actor: true})
+	mara, _ := subjects.Create(ctx, g.ID, subject.Input{Name: "Mara", Actor: true})
+	tx, _ := db.BeginTx(ctx, nil)
+	sc, err := scene.Insert(ctx, tx, g.ID, th.ID, tavern.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	entries := entry.NewStore(db)
+	say := []entry.Segment{{Kind: entry.Speech, Text: "Three days."}}
+	head, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Present, []string{innkeeper.ID}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := entries.Append(ctx, g.ID, th.ID, sc.ID, innkeeper.ID, "", say)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{innkeeper.ID}, ""); !errors.Is(err, entry.ErrInvalid) || !strings.Contains(err.Error(), "Innkeeper is there") {
+		t.Fatalf("enter of someone there: err = %v", err)
+	}
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, []string{mara.ID}, ""); !errors.Is(err, entry.ErrInvalid) || !strings.Contains(err.Error(), "Mara is not there") {
+		t.Fatalf("exit of someone absent: err = %v", err)
+	}
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{mara.ID}, "nope"); !errors.Is(err, entry.ErrNotFound) {
+		t.Fatalf("placed after unknown: err = %v", err)
+	}
+
+	// Mara enters right after the head, before the innkeeper's line, and the line moves down.
+	came, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{mara.ID}, head.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, _ := entries.List(ctx, g.ID, th.ID, sc.ID)
+	if len(list) != 3 || came.Seq != 2 || list[1].ID != came.ID || list[2].ID != first.ID || list[2].Seq != 3 {
+		t.Fatalf("after placed enter = %+v", list)
+	}
+	reply, err := entries.Append(ctx, g.ID, th.ID, sc.ID, mara.ID, "", say)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Staging is read at the point: Mara is there after her enter, not before it.
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, []string{mara.ID}, head.ID); !errors.Is(err, entry.ErrInvalid) {
+		t.Fatalf("exit placed before the enter: err = %v", err)
+	}
+
+	err = entries.Delete(ctx, g.ID, th.ID, sc.ID, came.ID)
+	if !errors.Is(err, entry.ErrInUse) || !strings.Contains(err.Error(), "Mara acts at entry 4") {
+		t.Fatalf("delete relied-on enter: err = %v", err)
+	}
+	// An exit after her beat changes nothing for the beat; an exit always goes freely.
+	gone, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, []string{mara.ID}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := entries.Delete(ctx, g.ID, th.ID, sc.ID, came.ID); !errors.Is(err, entry.ErrInUse) {
+		t.Fatalf("beat before her exit still stands on the enter: err = %v", err)
+	}
+	if err := entries.Delete(ctx, g.ID, th.ID, sc.ID, reply.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := entries.Delete(ctx, g.ID, th.ID, sc.ID, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := entries.Delete(ctx, g.ID, th.ID, sc.ID, came.ID); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ = entries.List(ctx, g.ID, th.ID, sc.ID); len(list) != 2 || list[1].ID != first.ID {
+		t.Fatalf("after unstaging = %+v", list)
 	}
 }

@@ -11,8 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
+	"aidventure/internal/attribute"
 	"aidventure/internal/game"
 )
 
@@ -34,18 +33,21 @@ type Subject struct {
 	// User marks an actor a human answers for; the model plays the rest.
 	User bool `json:"user"`
 	// Tracked marks an actor the story follows: a split keeps following tracked actors who part.
-	Tracked   bool      `json:"tracked"`
-	CreatedAt time.Time `json:"createdAt"`
+	Tracked bool `json:"tracked"`
+	// Attributes are the qualities the subject carries beyond its description.
+	Attributes []attribute.Value `json:"attributes"`
+	CreatedAt  time.Time         `json:"createdAt"`
 }
 
 // Input is what an author sets on a subject.
 type Input struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Actor       bool   `json:"actor"`
-	Scene       bool   `json:"scene"`
-	User        bool   `json:"user"`
-	Tracked     bool   `json:"tracked"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Actor       bool              `json:"actor"`
+	Scene       bool              `json:"scene"`
+	User        bool              `json:"user"`
+	Tracked     bool              `json:"tracked"`
+	Attributes  []attribute.Value `json:"attributes"`
 }
 
 type Store struct {
@@ -57,15 +59,6 @@ func NewStore(db *sql.DB) *Store {
 }
 
 func (s *Store) Create(ctx context.Context, gameID string, in Input) (Subject, error) {
-	id, err := uuid.NewV7()
-	if err != nil {
-		return Subject{}, fmt.Errorf("create subject: %w", err)
-	}
-	sub := Subject{
-		ID: id.String(), GameID: gameID, Name: in.Name, Description: in.Description, Actor: in.Actor, Scene: in.Scene, User: in.User, Tracked: in.Tracked,
-		CreatedAt: time.Now().UTC().Truncate(time.Second),
-	}
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Subject{}, fmt.Errorf("create subject: %w", err)
@@ -74,17 +67,19 @@ func (s *Store) Create(ctx context.Context, gameID string, in Input) (Subject, e
 	if err := game.Require(ctx, tx, gameID); err != nil {
 		return Subject{}, err
 	}
-	_, err = tx.ExecContext(ctx,
-		`INSERT INTO subjects (id, game_id, name, description, actor, scene, user, tracked, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sub.ID, sub.GameID, sub.Name, sub.Description, sub.Actor, sub.Scene, sub.User, sub.Tracked, sub.CreatedAt.Format(time.RFC3339))
+	sub, err := Insert(ctx, tx, gameID, in)
 	if err != nil {
-		return Subject{}, fmt.Errorf("create subject: %w", err)
+		return Subject{}, err
 	}
 	return sub, tx.Commit()
 }
 
 func (s *Store) List(ctx context.Context, gameID string) ([]Subject, error) {
 	if err := game.Require(ctx, s.db, gameID); err != nil {
+		return nil, err
+	}
+	carried, err := attribute.SubjectValues(ctx, s.db, gameID)
+	if err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx,
@@ -103,6 +98,10 @@ func (s *Store) List(ctx context.Context, gameID string) ([]Subject, error) {
 		}
 		if sub.CreatedAt, err = time.Parse(time.RFC3339, created); err != nil {
 			return nil, fmt.Errorf("list subjects: %w", err)
+		}
+		sub.Attributes = carried[sub.ID]
+		if sub.Attributes == nil {
+			sub.Attributes = []attribute.Value{}
 		}
 		subjects = append(subjects, sub)
 	}
@@ -164,9 +163,15 @@ func plural(word string, n int) string {
 	return word + "s"
 }
 
-// Update replaces the editable fields of a subject that belongs to gameID.
+// Update replaces the editable fields of a subject that belongs to gameID,
+// its attributes included.
 func (s *Store) Update(ctx context.Context, gameID, id string, in Input) error {
-	res, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("update subject: %w", err)
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
 		`UPDATE subjects SET name = ?, description = ?, actor = ?, scene = ?, user = ?, tracked = ? WHERE id = ? AND game_id = ?`,
 		in.Name, in.Description, in.Actor, in.Scene, in.User, in.Tracked, id, gameID)
 	if err != nil {
@@ -177,5 +182,8 @@ func (s *Store) Update(ctx context.Context, gameID, id string, in Input) error {
 	} else if n == 0 {
 		return fmt.Errorf("%w: subject %s in game %s", ErrNotFound, id, gameID)
 	}
-	return nil
+	if err := attribute.SetSubjectValues(ctx, tx, gameID, id, in.Attributes); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

@@ -33,6 +33,8 @@ var (
 	// ErrNotPresent is an actor acting in a scene it is not cast in.
 	ErrNotPresent = errors.New("actor is not present in the scene")
 	ErrInvalid    = errors.New("invalid entry")
+	// ErrInUse is an attempt to delete an enter line that a later beat relies on.
+	ErrInUse = errors.New("entry is relied on")
 )
 
 // Type is what an entry is. A beat moves the play: on in its scene, or into
@@ -148,22 +150,9 @@ func (s *Store) AppendAfter(ctx context.Context, gameID, threadID, sceneID, afte
 	if err := scene.Require(ctx, tx, gameID, threadID, sceneID); err != nil {
 		return Entry{}, err
 	}
-	var at int
-	err = tx.QueryRowContext(ctx, `SELECT seq FROM entries WHERE id = ? AND scene_id = ?`, afterID, sceneID).Scan(&at)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Entry{}, fmt.Errorf("%w: entry %s in scene %s, to insert after", ErrNotFound, afterID, sceneID)
-	}
+	at, err := shiftAfter(ctx, tx, sceneID, afterID)
 	if err != nil {
-		return Entry{}, fmt.Errorf("insert entry: %w", err)
-	}
-	// Two steps, through negatives, since seq is unique per scene and a plain shift collides with itself.
-	for _, q := range []string{
-		`UPDATE entries SET seq = -seq WHERE scene_id = ? AND seq > ?`,
-		`UPDATE entries SET seq = -seq + 1 WHERE scene_id = ? AND seq < 0 AND -seq > ?`,
-	} {
-		if _, err := tx.ExecContext(ctx, q, sceneID, at); err != nil {
-			return Entry{}, fmt.Errorf("insert entry: %w", err)
-		}
+		return Entry{}, err
 	}
 	if err := validate(segments); err != nil {
 		return Entry{}, err
@@ -181,9 +170,34 @@ func (s *Store) AppendAfter(ctx context.Context, gameID, threadID, sceneID, afte
 	return e, tx.Commit()
 }
 
-// Presence records, at the end of the scene, who entered or exited, or who is
-// there as it opens.
-func (s *Store) Presence(ctx context.Context, gameID, threadID, sceneID string, typ Type, actors []string) (Entry, error) {
+// shiftAfter makes room right after an entry of the scene: what followed moves
+// down one, and the entry's seq comes back for the newcomer to sit at plus one.
+func shiftAfter(ctx context.Context, tx *sql.Tx, sceneID, afterID string) (int, error) {
+	var at int
+	err := tx.QueryRowContext(ctx, `SELECT seq FROM entries WHERE id = ? AND scene_id = ?`, afterID, sceneID).Scan(&at)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("%w: entry %s in scene %s, to insert after", ErrNotFound, afterID, sceneID)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("insert entry: %w", err)
+	}
+	// Two steps, through negatives, since seq is unique per scene and a plain shift collides with itself.
+	for _, q := range []string{
+		`UPDATE entries SET seq = -seq WHERE scene_id = ? AND seq > ?`,
+		`UPDATE entries SET seq = -seq + 1 WHERE scene_id = ? AND seq < 0 AND -seq > ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, sceneID, at); err != nil {
+			return 0, fmt.Errorf("insert entry: %w", err)
+		}
+	}
+	return at, nil
+}
+
+// Presence records who entered or exited, or who is there as the scene opens:
+// at the end of the scene, or right after the entry afterID. Staging has to
+// agree with the script at that point: nobody enters who is there, nobody
+// exits who is not.
+func (s *Store) Presence(ctx context.Context, gameID, threadID, sceneID string, typ Type, actors []string, afterID string) (Entry, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Entry{}, fmt.Errorf("record presence: %w", err)
@@ -192,7 +206,30 @@ func (s *Store) Presence(ctx context.Context, gameID, threadID, sceneID string, 
 	if err := scene.Require(ctx, tx, gameID, threadID, sceneID); err != nil {
 		return Entry{}, err
 	}
-	e, err := InsertPresence(ctx, tx, gameID, sceneID, typ, actors)
+	// at is the point staging is read at and seq the place the line takes; both are the end unless placed.
+	at, seq := 0, 0
+	if afterID != "" {
+		if at, err = shiftAfter(ctx, tx, sceneID, afterID); err != nil {
+			return Entry{}, err
+		}
+		seq = at + 1
+	}
+	if typ != Present {
+		cast, err := scene.Cast(ctx, tx, sceneID, at)
+		if err != nil {
+			return Entry{}, err
+		}
+		for _, id := range actors {
+			if there := slices.Contains(cast, id); there == (typ == Enter) {
+				name, err := nameOf(ctx, tx, gameID, id)
+				if err != nil {
+					return Entry{}, err
+				}
+				return Entry{}, fmt.Errorf("%w: %s %s at that point, so cannot %s", ErrInvalid, name, map[bool]string{true: "is there", false: "is not there"}[there], typ)
+			}
+		}
+	}
+	e, err := insertPresence(ctx, tx, gameID, sceneID, typ, actors, seq)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -203,6 +240,11 @@ func (s *Store) Presence(ctx context.Context, gameID, threadID, sceneID string, 
 // inside a caller's transaction. Present is the head of a scene and goes
 // first or not at all; enter and exit name at least one actor.
 func InsertPresence(ctx context.Context, tx *sql.Tx, gameID, sceneID string, typ Type, actors []string) (Entry, error) {
+	return insertPresence(ctx, tx, gameID, sceneID, typ, actors, 0)
+}
+
+// insertPresence places the line at seq, or at the end when seq is 0.
+func insertPresence(ctx context.Context, tx *sql.Tx, gameID, sceneID string, typ Type, actors []string, seq int) (Entry, error) {
 	if !typ.presence() {
 		return Entry{}, fmt.Errorf("%w: %q is not a presence", ErrInvalid, typ)
 	}
@@ -221,11 +263,24 @@ func InsertPresence(ctx context.Context, tx *sql.Tx, gameID, sceneID string, typ
 			return Entry{}, err
 		}
 	}
-	e := Entry{SceneID: sceneID, Type: typ, Actors: actors}
+	e := Entry{SceneID: sceneID, Type: typ, Actors: actors, Seq: seq}
 	if err := insert(ctx, tx, &e); err != nil {
 		return Entry{}, err
 	}
 	return e, nil
+}
+
+// nameOf is what the author calls a subject, for errors.
+func nameOf(ctx context.Context, q querier, gameID, id string) (string, error) {
+	var name string
+	err := q.QueryRowContext(ctx, `SELECT name FROM subjects WHERE id = ? AND game_id = ?`, id, gameID).Scan(&name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: subject %s in game %s", subject.ErrNotFound, id, gameID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("look up subject: %w", err)
+	}
+	return name, nil
 }
 
 // Direct records the director's decision at the end of the scene.
@@ -376,6 +431,35 @@ func (s *Store) Delete(ctx context.Context, gameID, threadID, sceneID, id string
 	}
 	if ending > 0 {
 		return fmt.Errorf("%w: another thread converged on entry %s", ErrEnding, id)
+	}
+	var typ Type
+	var seq int
+	err = tx.QueryRowContext(ctx, `SELECT type, seq FROM entries WHERE id = ? AND scene_id = ?`, id, sceneID).Scan(&typ, &seq)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: entry %s in scene %s", ErrNotFound, id, sceneID)
+	}
+	if err != nil {
+		return fmt.Errorf("delete entry: %w", err)
+	}
+	if typ == Enter {
+		// Without the enter, the fold would have the actor absent while acting:
+		// the first later beat of anyone it brought in, with no staging of theirs between.
+		var name string
+		var at int
+		err := tx.QueryRowContext(ctx, `
+			SELECT s.name, b.seq FROM entries b
+			JOIN entry_actors a ON a.entry_id = ? AND a.subject_id = b.actor_id
+			JOIN subjects s ON s.id = b.actor_id
+			WHERE b.scene_id = ? AND b.seq > ? AND NOT EXISTS (
+				SELECT 1 FROM entries x JOIN entry_actors xa ON xa.entry_id = x.id
+				WHERE x.scene_id = b.scene_id AND x.type IN ('enter', 'exit') AND xa.subject_id = b.actor_id AND x.seq > ? AND x.seq < b.seq)
+			ORDER BY b.seq LIMIT 1`, id, sceneID, seq, seq).Scan(&name, &at)
+		if err == nil {
+			return fmt.Errorf("%w: %s acts at entry %d of the scene on the strength of this enter; remove that first", ErrInUse, name, at)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("delete entry: %w", err)
+		}
 	}
 	for _, q := range []string{
 		`DELETE FROM segments WHERE entry_id IN (SELECT id FROM entries WHERE id = ? AND scene_id = ?)`,

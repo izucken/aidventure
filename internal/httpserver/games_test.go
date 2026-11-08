@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"aidventure/internal/attribute"
 	"aidventure/internal/entry"
 	"aidventure/internal/game"
 	"aidventure/internal/httpserver"
@@ -45,13 +46,14 @@ func (scripted) Render(_ context.Context, req llm.Request) (llm.Rendered, error)
 func newServer(t *testing.T, db *sql.DB) *httptest.Server {
 	t.Helper()
 	deps := httpserver.Deps{
-		Games:    game.NewStore(db),
-		Threads:  thread.NewStore(db),
-		Subjects: subject.NewStore(db),
-		Scenes:   scene.NewStore(db),
-		Entries:  entry.NewStore(db),
-		Models:   model.NewStore(db),
-		DB:       db,
+		Games:      game.NewStore(db),
+		Threads:    thread.NewStore(db),
+		Subjects:   subject.NewStore(db),
+		Attributes: attribute.NewStore(db),
+		Scenes:     scene.NewStore(db),
+		Entries:    entry.NewStore(db),
+		Models:     model.NewStore(db),
+		DB:         db,
 	}
 	deps.Roller = &play.Roller{
 		DB: db, Models: deps.Models, Threads: deps.Threads, Subjects: deps.Subjects, Scenes: deps.Scenes, Entries: deps.Entries,
@@ -592,5 +594,83 @@ func TestRollFlow(t *testing.T) {
 	}
 	if status, body := call("DELETE", threadBase+"/turn", ""); status != http.StatusUnprocessableEntity {
 		t.Fatalf("pass with no turn: %d %s", status, body)
+	}
+}
+
+func TestAttributesFlow(t *testing.T) {
+	db, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	srv := newServer(t, db)
+	defer srv.Close()
+	call := caller(t, srv)
+
+	_, body := call("POST", "/api/games", `{"name":"Harbour"}`)
+	var g game.Game
+	if err := json.Unmarshal([]byte(body), &g); err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/games/" + g.ID + "/attributes"
+
+	if status, body := call("POST", base, `{"name":"Mood","description":"","kind":"text","options":[]}`); status != http.StatusBadRequest {
+		t.Fatalf("unknown kind: %d %s", status, body)
+	}
+	status, body := call("POST", base, `{"name":"Mood","description":"How they are.","kind":"enum","options":["calm","angry"]}`)
+	if status != http.StatusCreated {
+		t.Fatalf("create: %d %s", status, body)
+	}
+	var mood attribute.Attribute
+	if err := json.Unmarshal([]byte(body), &mood); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := call("PUT", base+"/nope", `{"name":"x","description":"","kind":"flag","options":[]}`); status != http.StatusNotFound {
+		t.Fatalf("update unknown: %d %s", status, body)
+	}
+
+	// Values ride on subjects and links and are checked against the declaration.
+	subjects := "/api/games/" + g.ID + "/subjects"
+	if status, body := call("POST", subjects, `{"name":"Mara","description":"","attributes":[{"attributeId":"`+mood.ID+`","value":"sad"}]}`); status != http.StatusBadRequest {
+		t.Fatalf("value outside the enum: %d %s", status, body)
+	}
+	if status, body := call("POST", subjects, `{"name":"Mara","description":"","attributes":[{"attributeId":"nope","value":"calm"}]}`); status != http.StatusNotFound {
+		t.Fatalf("value of unknown attribute: %d %s", status, body)
+	}
+	status, body = call("POST", subjects, `{"name":"Mara","description":"","attributes":[{"attributeId":"`+mood.ID+`","value":"angry"},{"name":"scar","value":"left cheek"}]}`)
+	if status != http.StatusCreated || !strings.Contains(body, `"attributes":[{"attributeId":"`+mood.ID+`","value":"angry"},{"name":"scar","value":"left cheek"}]`) {
+		t.Fatalf("create with values: %d %s", status, body)
+	}
+	var mara subject.Subject
+	if err := json.Unmarshal([]byte(body), &mara); err != nil {
+		t.Fatal(err)
+	}
+	_, body = call("POST", subjects, `{"name":"Fen","description":""}`)
+	var fen subject.Subject
+	if err := json.Unmarshal([]byte(body), &fen); err != nil {
+		t.Fatal(err)
+	}
+	links := "/api/games/" + g.ID + "/links"
+	if status, body := call("POST", links, `{"fromId":"`+mara.ID+`","toId":"`+fen.ID+`","relation":"trusts","attributes":[{"attributeId":"`+mood.ID+`","value":"sad"}]}`); status != http.StatusBadRequest {
+		t.Fatalf("link value outside the enum: %d %s", status, body)
+	}
+	if status, body := call("POST", links, `{"fromId":"`+mara.ID+`","toId":"`+fen.ID+`","relation":"trusts","attributes":[{"name":"since","value":"spring"}]}`); status != http.StatusCreated || !strings.Contains(body, `"attributes":[{"name":"since","value":"spring"}]`) {
+		t.Fatalf("link with values: %d %s", status, body)
+	}
+
+	if status, body := call("PUT", base+"/"+mood.ID, `{"name":"Mood","description":"","kind":"enum","options":["calm"]}`); status != http.StatusConflict {
+		t.Fatalf("narrow under a value: %d %s", status, body)
+	}
+	if status, body := call("DELETE", base+"/"+mood.ID, ""); status != http.StatusConflict {
+		t.Fatalf("delete carried: %d %s", status, body)
+	}
+	if status, body := call("PUT", subjects+"/"+mara.ID, `{"name":"Mara","description":"","attributes":[]}`); status != http.StatusNoContent {
+		t.Fatalf("drop values: %d %s", status, body)
+	}
+	if status, body := call("DELETE", base+"/"+mood.ID, ""); status != http.StatusNoContent {
+		t.Fatalf("delete: %d %s", status, body)
+	}
+	if status, body := call("GET", base, ""); status != http.StatusOK || body != "[]" {
+		t.Fatalf("list after delete: %d %s", status, body)
 	}
 }

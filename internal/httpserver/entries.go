@@ -92,7 +92,7 @@ func (a entriesAPI) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, game.ErrNotFound), errors.Is(err, thread.ErrNotFound),
 		errors.Is(err, scene.ErrNotFound), errors.Is(err, subject.ErrNotFound), errors.Is(err, entry.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, entry.ErrNotActor), errors.Is(err, entry.ErrOpening), errors.Is(err, entry.ErrEnding), errors.Is(err, entry.ErrNotPresent):
+	case errors.Is(err, entry.ErrNotActor), errors.Is(err, entry.ErrOpening), errors.Is(err, entry.ErrEnding), errors.Is(err, entry.ErrNotPresent), errors.Is(err, entry.ErrInUse):
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	default:
 		a.log.Error("request failed", "err", err)

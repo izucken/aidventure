@@ -1,16 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api, type Game, type Subject, type Thread } from "./api";
+import { api, type Attribute, type Game, type Subject, type Thread } from "./api";
 import styles from "./App.module.css";
-import { GameSettings } from "./GameSettings";
+import { Attributes } from "./Attributes";
 import { InlineName } from "./InlineName";
 import { Modal } from "./Modal";
 import { Models } from "./Models";
+import { Narration } from "./Narration";
 import { Picker } from "./Picker";
 import { Scenes } from "./Scenes";
 import { Subjects } from "./Subjects";
 import { Toasts, type Toast } from "./Toasts";
 import corner from "./shared/corner.module.css";
+
+// What settings mode holds: how the game is told, and what it is about.
+type Tab = "narration" | "subjects" | "attributes";
+const tabs: { id: Tab; label: string }[] = [
+  { id: "narration", label: "Narration" },
+  { id: "subjects", label: "Subjects" },
+  { id: "attributes", label: "Attributes" },
+];
 
 export function App() {
   const [games, setGames] = useState<Game[]>([]);
@@ -18,7 +27,10 @@ export function App() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [threadId, setThreadId] = useState<string | null>(null);
   const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [view, setView] = useState<"script" | "subjects">("script");
+  const [attributes, setAttributes] = useState<Attribute[]>([]);
+  // Play shows the script; settings shows the game's own tabs. The tab last looked at stays.
+  const [mode, setMode] = useState<"play" | "settings">("play");
+  const [tab, setTab] = useState<Tab>("narration");
   const gamesDialog = useRef<HTMLDialogElement>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastSeq = useRef(0);
@@ -61,9 +73,29 @@ export function App() {
     }
   }, [gameId, report]);
 
+  const loadAttributes = useCallback(async () => {
+    if (!gameId) return;
+    try {
+      setAttributes(await api.attributes(gameId));
+    } catch (err) {
+      report(err);
+    }
+  }, [gameId, report]);
+
   useEffect(() => {
     void loadGames();
   }, [loadGames]);
+
+  useEffect(() => {
+    if (mode !== "settings") return;
+    const leave = (e: globalThis.KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key !== "Escape" || e.defaultPrevented || t?.closest("input, textarea, select, dialog")) return;
+      setMode("play");
+    };
+    window.addEventListener("keydown", leave);
+    return () => window.removeEventListener("keydown", leave);
+  }, [mode]);
 
   // The old game's threads go before the new game's arrive, so no render pairs the two.
   useEffect(() => {
@@ -76,6 +108,11 @@ export function App() {
     setSubjects([]);
     void loadSubjects();
   }, [loadSubjects]);
+
+  useEffect(() => {
+    setAttributes([]);
+    void loadAttributes();
+  }, [loadAttributes]);
 
   async function selectGame(id: string) {
     try {
@@ -162,21 +199,20 @@ export function App() {
       <header className={styles.header}>
         {game ? (
           <>
-            <GameSettings game={game} onChange={loadGames} onError={report} />
             <InlineName as="h1" className={styles.gameName} value={game.name} label="Game name" onSave={renameGame} />
+            <button
+              type="button"
+              className={styles.settings}
+              title={mode === "settings" ? "Back to the script (Esc)" : "Game settings"}
+              aria-label="Game settings"
+              aria-pressed={mode === "settings"}
+              onClick={() => setMode(mode === "settings" ? "play" : "settings")}
+            >
+              ⚙
+            </button>
           </>
         ) : (
           <h1 className={styles.gameName}>No game chosen</h1>
-        )}
-        {game && (
-          <nav className={styles.views} aria-label="View">
-            <button type="button" aria-pressed={view === "script"} onClick={() => setView("script")}>
-              Script
-            </button>
-            <button type="button" aria-pressed={view === "subjects"} onClick={() => setView("subjects")}>
-              Subjects
-            </button>
-          </nav>
         )}
       </header>
       <Modal ref={gamesDialog} title="Games" narrow>
@@ -209,10 +245,25 @@ export function App() {
             </button>
           </p>
         )}
-        {game && view === "subjects" && (
-          <Subjects gameId={game.id} subjects={subjects} onChange={loadSubjects} onError={report} />
+        {game && mode === "settings" && (
+          <>
+            <nav className={styles.tabs} aria-label="Settings">
+              {tabs.map((t) => (
+                <button key={t.id} type="button" aria-pressed={tab === t.id} onClick={() => setTab(t.id)}>
+                  {t.label}
+                </button>
+              ))}
+            </nav>
+            {tab === "narration" && <Narration game={game} onChange={loadGames} onError={report} />}
+            {tab === "subjects" && (
+              <Subjects gameId={game.id} subjects={subjects} attributes={attributes} onChange={loadSubjects} onError={report} />
+            )}
+            {tab === "attributes" && (
+              <Attributes gameId={game.id} attributes={attributes} onChange={loadAttributes} onError={report} />
+            )}
+          </>
         )}
-        {game && view === "script" && (
+        {game && mode === "play" && (
           <>
             <nav>
               <Picker

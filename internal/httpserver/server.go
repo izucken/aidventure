@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"aidventure/internal/attribute"
 	"aidventure/internal/entry"
 	"aidventure/internal/game"
 	"aidventure/internal/model"
@@ -20,13 +21,14 @@ import (
 
 // Deps is everything the API reads, writes and drives.
 type Deps struct {
-	Games    *game.Store
-	Threads  *thread.Store
-	Subjects *subject.Store
-	Scenes   *scene.Store
-	Entries  *entry.Store
-	Models   *model.Store
-	Roller   *play.Roller
+	Games      *game.Store
+	Threads    *thread.Store
+	Subjects   *subject.Store
+	Attributes *attribute.Store
+	Scenes     *scene.Store
+	Entries    *entry.Store
+	Models     *model.Store
+	Roller     *play.Roller
 	// DB is for transitions, which span stores in one transaction.
 	DB *sql.DB
 }
@@ -70,6 +72,12 @@ func New(log *slog.Logger, frontend http.Handler, st Deps) http.Handler {
 	mux.HandleFunc("POST /api/games/{gameId}/links", l.create)
 	mux.HandleFunc("PUT /api/games/{gameId}/links/{linkId}", l.update)
 	mux.HandleFunc("DELETE /api/games/{gameId}/links/{linkId}", l.remove)
+
+	at := attributesAPI{attributes: st.Attributes, log: log}
+	mux.HandleFunc("GET /api/games/{gameId}/attributes", at.list)
+	mux.HandleFunc("POST /api/games/{gameId}/attributes", at.create)
+	mux.HandleFunc("PUT /api/games/{gameId}/attributes/{attributeId}", at.update)
+	mux.HandleFunc("DELETE /api/games/{gameId}/attributes/{attributeId}", at.remove)
 
 	sc := scenesAPI{scenes: st.Scenes, entries: st.Entries, log: log}
 	mux.HandleFunc("GET /api/games/{gameId}/threads/{threadId}/scenes", sc.list)

@@ -1,0 +1,17 @@
+@layer components {
+  .form {
+    display: grid;
+    gap: 0.6rem;
+    max-width: 40rem;
+  }
+
+  .form label {
+    display: grid;
+    gap: 0.3rem;
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+}

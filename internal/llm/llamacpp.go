@@ -76,12 +76,12 @@ func (c *LlamaCpp) Complete(ctx context.Context, req Request) (Response, error) 
 		return Response{}, err
 	}
 	res := thought.response()
-	if !thought.StoppedWord && !thought.StoppedLimit {
+	if !thought.atWord() && !thought.atLimit() {
 		// The model answered without a thought block; what it wrote is the answer.
 		return res, nil
 	}
 	tail := thought.Content
-	if thought.StoppedLimit {
+	if thought.atLimit() {
 		tail += wrapUp
 		if req.Stream != nil {
 			req.Stream("think", wrapUp)
@@ -129,16 +129,22 @@ type completion struct {
 	Content string `json:"content"`
 	Stop    bool   `json:"stop"`
 	// Why it stopped: a stop string, the predict limit, or the model's own end.
-	StoppedWord     bool `json:"stopped_word"`
-	StoppedLimit    bool `json:"stopped_limit"`
-	TokensEvaluated int  `json:"tokens_evaluated"`
-	TokensCached    int  `json:"tokens_cached"`
-	TokensPredicted int  `json:"tokens_predicted"`
+	// Current servers say so in stop_type; older ones in the booleans.
+	StopType        string `json:"stop_type"`
+	StoppedWord     bool   `json:"stopped_word"`
+	StoppedLimit    bool   `json:"stopped_limit"`
+	TokensEvaluated int    `json:"tokens_evaluated"`
+	TokensCached    int    `json:"tokens_cached"`
+	TokensPredicted int    `json:"tokens_predicted"`
 	Timings         struct {
 		PromptMS    float64 `json:"prompt_ms"`
 		PredictedMS float64 `json:"predicted_ms"`
 	} `json:"timings"`
 }
+
+// atWord and atLimit are why the completion stopped, whichever way the server said it.
+func (out completion) atWord() bool  { return out.StopType == "word" || out.StoppedWord }
+func (out completion) atLimit() bool { return out.StopType == "limit" || out.StoppedLimit }
 
 // response is the completion as the rest of the server reads it, all of it as text.
 func (out completion) response() Response {

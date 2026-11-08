@@ -1,0 +1,31 @@
+/* A two-pane editor: a list of entities on the left picks one, a form on the
+   right edits it. */
+@layer components {
+  .view {
+    display: grid;
+    grid-template-columns: 20rem 1fr;
+    gap: 2rem;
+    margin-top: 1rem;
+  }
+
+  .view input[type="text"],
+  .view input:not([type]) {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 0.6rem;
+  }
+
+  .detail {
+    max-width: 40rem;
+  }
+
+  .form {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.4rem;
+  }
+}

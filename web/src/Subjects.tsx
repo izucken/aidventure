@@ -1,14 +1,18 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 
-import { api, type Link, type Subject, type SubjectInput } from "./api";
+import { api, type Attribute, type AttributeValue, type Link, type Subject, type SubjectInput } from "./api";
+import { AttributeFields } from "./AttributeFields";
 import badge from "./shared/badge.module.css";
 import deletable from "./shared/deletable.module.css";
 import list from "./shared/listItem.module.css";
+import panes from "./shared/panes.module.css";
 import styles from "./Subjects.module.css";
 
 type Props = {
   gameId: string;
   subjects: Subject[];
+  // The game's declared attributes, offered on subjects and links alike.
+  attributes: Attribute[];
   onChange: () => Promise<void>;
   onError: (err: unknown) => void;
 };
@@ -23,16 +27,16 @@ const kinds: { id: Kind; label: string }[] = [
 const ofKind = (s: Subject, k: Kind) =>
   k === "all" || (k === "places" && s.scene) || (k === "actors" && s.actor) || (k === "other" && !s.scene && !s.actor);
 
-const empty: SubjectInput = { name: "", description: "", actor: false, scene: false, user: false, tracked: false };
+const empty: SubjectInput = { name: "", description: "", actor: false, scene: false, user: false, tracked: false, attributes: [] };
 // A link under construction, seen from the selected subject: outward reads
 // "this relation other", inward "other relation this".
-type LinkDraft = { inward: boolean; relation: string; otherId: string };
-const noLink: LinkDraft = { inward: false, relation: "", otherId: "" };
+type LinkDraft = { inward: boolean; relation: string; otherId: string; attributes: AttributeValue[] };
+const noLink: LinkDraft = { inward: false, relation: "", otherId: "", attributes: [] };
 const swap = (d: LinkDraft): LinkDraft => ({ ...d, inward: !d.inward });
 
 // The game's subjects: everything the play is about, and how they stand to
 // each other. The list on the left picks one; the right edits it and its links.
-export function Subjects({ gameId, subjects, onChange, onError }: Props) {
+export function Subjects({ gameId, subjects, attributes, onChange, onError }: Props) {
   const [kind, setKind] = useState<Kind>("all");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
@@ -57,7 +61,7 @@ export function Subjects({ gameId, subjects, onChange, onError }: Props) {
 
   function pick(s: Subject) {
     setEditing(s.id);
-    setDraft({ name: s.name, description: s.description, actor: s.actor, scene: s.scene, user: s.user, tracked: s.tracked });
+    setDraft({ name: s.name, description: s.description, actor: s.actor, scene: s.scene, user: s.user, tracked: s.tracked, attributes: s.attributes });
     setLink(noLink);
     setEditingLink(null);
   }
@@ -101,9 +105,9 @@ export function Subjects({ gameId, subjects, onChange, onError }: Props) {
     if (!editing || !link.otherId || !link.relation.trim()) return;
     const [fromId, toId] = link.inward ? [link.otherId, editing] : [editing, link.otherId];
     try {
-      await api.createLink(gameId, { fromId, toId, relation: link.relation.trim() });
+      await api.createLink(gameId, { fromId, toId, relation: link.relation.trim(), attributes: link.attributes });
       await reloadLinks();
-      setLink({ ...link, relation: "", otherId: "" });
+      setLink({ ...link, relation: "", otherId: "", attributes: [] });
     } catch (err) {
       onError(err);
     }
@@ -112,7 +116,7 @@ export function Subjects({ gameId, subjects, onChange, onError }: Props) {
   // A link edits in place: picked, its row becomes the form.
   function pickLink(l: Link) {
     setEditingLink(l.id);
-    setLinkEdit({ inward: l.toId === editing, relation: l.relation, otherId: l.fromId === editing ? l.toId : l.fromId });
+    setLinkEdit({ inward: l.toId === editing, relation: l.relation, otherId: l.fromId === editing ? l.toId : l.fromId, attributes: l.attributes });
   }
 
   async function saveLink(e: FormEvent) {
@@ -120,7 +124,7 @@ export function Subjects({ gameId, subjects, onChange, onError }: Props) {
     if (!editing || !editingLink || !linkEdit.otherId || !linkEdit.relation.trim()) return;
     const [fromId, toId] = linkEdit.inward ? [linkEdit.otherId, editing] : [editing, linkEdit.otherId];
     try {
-      await api.updateLink(gameId, editingLink, { fromId, toId, relation: linkEdit.relation.trim() });
+      await api.updateLink(gameId, editingLink, { fromId, toId, relation: linkEdit.relation.trim(), attributes: linkEdit.attributes });
       await reloadLinks();
       setEditingLink(null);
     } catch (err) {
@@ -143,7 +147,7 @@ export function Subjects({ gameId, subjects, onChange, onError }: Props) {
   const others = subjects.filter((s) => s.id !== editing);
 
   return (
-    <section className={styles.view}>
+    <section className={panes.view}>
       <div>
         <div className={styles.filters}>
           {kinds.map((k) => (
@@ -199,8 +203,8 @@ export function Subjects({ gameId, subjects, onChange, onError }: Props) {
           ))}
         </ul>
       </div>
-      <div className={styles.detail}>
-        <form className={styles.form} onSubmit={(e) => void submit(e)}>
+      <div className={panes.detail}>
+        <form className={panes.form} onSubmit={(e) => void submit(e)}>
           <input
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
@@ -240,7 +244,8 @@ export function Subjects({ gameId, subjects, onChange, onError }: Props) {
             />{" "}
             Tracked: the story follows this actor
           </label>
-          <div className={styles.actions}>
+          <AttributeFields value={draft.attributes} attributes={attributes} onChange={(vs) => setDraft({ ...draft, attributes: vs })} />
+          <div className={panes.actions}>
             <button type="submit" disabled={!draft.name.trim()}>
               {editing ? "Save" : "Add"}
             </button>
@@ -256,6 +261,7 @@ export function Subjects({ gameId, subjects, onChange, onError }: Props) {
                   <li key={l.id} className={`${styles.link} ${styles.editingLink}`} aria-current="true">
                     <form className={styles.linkForm} onSubmit={(e) => void saveLink(e)}>
                       <LinkFields value={linkEdit} self={draft.name} others={others} onChange={setLinkEdit} />
+                      <AttributeFields value={linkEdit.attributes} attributes={attributes} onChange={(vs) => setLinkEdit({ ...linkEdit, attributes: vs })} />
                       <div className={styles.linkActions}>
                         <button type="submit" disabled={!linkEdit.otherId || !linkEdit.relation.trim()}>
                           Save
@@ -290,6 +296,7 @@ export function Subjects({ gameId, subjects, onChange, onError }: Props) {
             </ul>
             <form className={styles.linkForm} onSubmit={(e) => void addLink(e)}>
               <LinkFields value={link} self={draft.name} others={others} onChange={setLink} />
+              <AttributeFields value={link.attributes} attributes={attributes} onChange={(vs) => setLink({ ...link, attributes: vs })} />
               <div className={styles.linkActions}>
                 <button type="submit" disabled={!link.otherId || !link.relation.trim()}>
                   Link

@@ -1,14 +1,14 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
 import { api, type Direction, type Entry, type PlayEvent, type Preview, type Scene, type Subject, type Thread, type Turn } from "./api";
-import { DirectionControls, directionReady, fromDirection, stay, toDirection, type DirectionDraft } from "./DirectionControls";
 import styles from "./Entries.module.css";
 import { EntryForm } from "./EntryForm";
 import { InlineName } from "./InlineName";
 import { Modal } from "./Modal";
-import { formatScript, parseScript } from "./script";
+import { analyze, complete, formatDirection, formatScript, parseScript, type Context } from "./script";
 import deletable from "./shared/deletable.module.css";
 import kinds from "./shared/segments.module.css";
+import { SyntaxHelp } from "./SyntaxHelp";
 
 type Props = {
   gameId: string;
@@ -26,9 +26,6 @@ type Props = {
   onError: (err: unknown) => void;
 };
 
-type Draft = { actorId: string; text: string };
-const blank: Draft = { actorId: "", text: "" };
-const ready = (d: Draft) => Boolean(d.actorId) && parseScript(d.text).length > 0;
 
 const phaseLabel: Record<PlayEvent["phase"], string> = { direct: "Directing…", entry: "Writing…" };
 
@@ -40,10 +37,10 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
   const [editing, setEditing] = useState<string | null>(null);
   // The entry after which a new one is being written, in the gap below it.
   const [inserting, setInserting] = useState<string | null>(null);
-  const [insert, setInsert] = useState<Draft>(blank);
-  const [edit, setEdit] = useState<Draft>(blank);
-  const [draft, setDraft] = useState<Draft>(blank);
-  const [direction, setDirection] = useState<DirectionDraft>(stay);
+  // Drafts are text alone; who acts is the cue line.
+  const [insert, setInsert] = useState("");
+  const [edit, setEdit] = useState("");
+  const [draft, setDraft] = useState("");
   const [thought, setThought] = useState<{ title: string; text: string } | null>(null);
   const thinking = useRef<HTMLDialogElement>(null);
   const [rolling, setRolling] = useState(false);
@@ -52,6 +49,7 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
   const [turn, setTurn] = useState<Turn | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const debug = useRef<HTMLDialogElement>(null);
+  const help = useRef<HTMLDialogElement>(null);
 
   function showThought(title: string, text: string) {
     setThought({ title, text });
@@ -65,8 +63,39 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
   const others = threads.filter((t) => t.id !== threadId && !t.endedByEntryId);
   const latest = scenes.at(-1);
   const sceneId = latest?.id ?? "";
-  // Only the present can act: the pickers offer a scene's cast.
-  const presentIn = (sc: Scene | undefined) => actors.filter((a) => sc?.cast.includes(a.id));
+  // Who is in the scene: its staging lines folded, up to and including the
+  // entry upTo, or all of them. Folded here from the entries, so nothing has
+  // to be kept in step with them.
+  function castAt(sc: Scene | undefined, upTo?: string): string[] {
+    const cast: string[] = [];
+    for (const e of entries) {
+      if (e.sceneId !== sc?.id) continue;
+      for (const id of e.actors ?? []) {
+        if (e.type === "exit") {
+          const at = cast.indexOf(id);
+          if (at >= 0) cast.splice(at, 1);
+        } else if ((e.type === "present" || e.type === "enter") && !cast.includes(id)) {
+          cast.push(id);
+        }
+      }
+      if (e.id === upTo) break;
+    }
+    return cast;
+  }
+  const presentIn = (sc: Scene | undefined) => actors.filter((a) => castAt(sc).includes(a.id));
+  // What a text written at a point of the scene is read against.
+  const context = (sc: Scene | undefined, upTo?: string, more: Partial<Context> = {}): Context => ({ actors, present: castAt(sc, upTo), ...more });
+  // Where the composer may take the play: the game's places, the other open threads, and whether there is a scene to stay in.
+  const moves = { places: subjects.filter((s) => s.scene), threads: others, inScene: Boolean(sceneId) };
+  const tailContext = context(latest, undefined, { ...(turn?.user ? { locked: turn.actorId } : {}), moves });
+  const tail = analyze(draft, tailContext);
+
+  // Records who entered or exited: at the end of the scene, or right after an
+  // entry. The scenes reload too, since a cut's default cast comes from them.
+  async function stage(sc: Scene, type: "enter" | "exit", ids: string[], afterId?: string) {
+    await api.presence(gameId, threadId, sc.id, type, ids, afterId);
+    await Promise.all([reload(), onChange()]);
+  }
 
   async function retitle(sc: Scene, title: string) {
     try {
@@ -77,27 +106,10 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
     }
   }
 
-  // Toggling presence records an enter or exit at the end of the scene; the
-  // new entry slots in after the scene's last, and the cast reloads with the scenes.
-  async function setPresent(sc: Scene, id: string, on: boolean) {
-    try {
-      const e = await api.presence(gameId, threadId, sc.id, on ? "enter" : "exit", [id]);
-      setEntries((es) => {
-        let at = es.length - 1;
-        while (at >= 0 && es[at].sceneId !== sc.id) at--;
-        return [...es.slice(0, at + 1), e, ...es.slice(at + 1)];
-      });
-      await onChange();
-    } catch (err) {
-      onError(err);
-    }
-  }
-
   useEffect(() => {
     setEntries([]);
     setEditing(null);
-    setDraft(blank);
-    setDirection(stay);
+    setDraft("");
     setTurn(null);
     api.threadEntries(gameId, threadId).then(setEntries).catch(onError);
     api.turn(gameId, threadId).then(setTurn).catch(onError);
@@ -108,26 +120,33 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
     api.threadEntries(gameId, threadId).then(setEntries).catch(onError);
   }, [gameId, threadId, scenes, onError]);
 
-  // A turn handed to a human comes with its direction; the composer takes it up.
+  // A turn handed to a human comes with its direction; the composer takes it
+  // up as move lines under the cue, with room between for the entry.
   useEffect(() => {
-    if (turn?.user) setDirection(fromDirection(turn.direction));
+    if (!turn?.user) return;
+    const lines = formatDirection(turn.direction, context(latest, undefined, { moves }));
+    if (lines) setDraft(`${nameOf(turn.actorId)}:\n\n${lines}`);
   }, [turn]);
 
-  // The composer speaks for a human by default: whoever user-controlled acted
-  // last, else the first user-controlled actor.
+  // A blank composer gets its cue: whoever user-controlled acted last, else
+  // the first user-controlled actor. A locked turn puts its actor there as
+  // long as nothing else is written. Otherwise the text is the author's.
   useEffect(() => {
-    const present = presentIn(latest);
+    const written = tail.lines.some((l) => l.kind !== "blank" && l.kind !== "cue");
+    let pick = "";
     if (turn?.user) {
-      if (draft.actorId !== turn.actorId) setDraft((d) => ({ ...d, actorId: turn.actorId }));
-      return;
+      if (written || tail.actorId === turn.actorId) return;
+      pick = turn.actorId;
+    } else {
+      if (draft.trim() !== "") return;
+      const present = presentIn(latest);
+      const isUser = (id: string) => present.some((a) => a.id === id && a.user);
+      const last = [...entries].reverse().find((e) => e.actorId && isUser(e.actorId))?.actorId;
+      pick = last ?? present.find((a) => a.user)?.id ?? "";
     }
-    if (draft.actorId && present.some((a) => a.id === draft.actorId)) return;
-    const isUser = (id: string) => present.some((a) => a.id === id && a.user);
-    const last = [...entries].reverse().find((e) => e.actorId && isUser(e.actorId))?.actorId;
-    const first = present.find((a) => a.user)?.id;
-    const pick = last ?? first ?? "";
-    setDraft((d) => ({ ...d, actorId: pick }));
-  }, [entries, subjects, scenes, latest, draft.actorId, turn]);
+    const want = pick ? `${nameOf(pick)}:\n` : "";
+    if (draft !== want) setDraft(want);
+  }, [entries, subjects, scenes, latest, draft, turn]);
 
   async function reload() {
     setEntries(await api.threadEntries(gameId, threadId));
@@ -135,15 +154,18 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
 
   function pick(entry: Entry) {
     setEditing(entry.id);
-    setEdit({ actorId: entry.actorId ?? "", text: formatScript(entry.segments ?? []) });
+    setEdit(formatScript(nameOf(entry.actorId ?? ""), entry.segments ?? []));
   }
 
+  // An edit is read where the entry stands: who is there at that point, and no staging in a beat's place.
+  const target = entries.find((e) => e.id === editing);
+  const editContext = context(scenes.find((s) => s.id === target?.sceneId), target?.id, { editing: true });
+  const edited = analyze(edit, editContext);
+
   async function save() {
-    if (!editing || !ready(edit)) return;
-    const target = entries.find((e) => e.id === editing);
-    if (!target) return;
+    if (!editing || !target || !complete(edited)) return;
     try {
-      await api.updateEntry(gameId, threadId, target.sceneId, editing, edit.actorId, parseScript(edit.text));
+      await api.updateEntry(gameId, threadId, target.sceneId, editing, edited.actorId, edited.segments);
       await reload();
       setEditing(null);
     } catch (err) {
@@ -151,7 +173,7 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
     }
   }
 
-  const canSubmit = ready(draft) && directionReady(direction, Boolean(sceneId));
+  const canSubmit = complete(tail);
 
   // Follows the play to where an entry landed: the scene list here, or another thread.
   async function landed(threadOfEntry: string | undefined) {
@@ -160,12 +182,16 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
   }
 
   async function insertAfter(sc: Scene, afterId: string) {
-    if (!ready(insert)) return;
+    const a = analyze(insert, context(sc, afterId));
+    if (!complete(a)) return;
     try {
-      await api.appendEntry(gameId, threadId, sc.id, insert.actorId, parseScript(insert.text), afterId);
-      await reload();
+      if (a.staging) await stage(sc, a.staging.type, a.staged, afterId);
+      else {
+        await api.appendEntry(gameId, threadId, sc.id, a.actorId, a.segments, afterId);
+        await reload();
+      }
       setInserting(null);
-      setInsert(blank);
+      setInsert("");
     } catch (err) {
       onError(err);
     }
@@ -173,26 +199,24 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
 
   async function append() {
     // Ctrl+Enter on an empty composer moves the play instead of adding nothing.
-    if (!draft.text.trim() && direction.type === "" && sceneId && !turn?.user && !rolling) {
+    const empty = !tail.lines.some((l) => l.kind !== "blank" && l.kind !== "cue");
+    if (empty && sceneId && !turn?.user && !rolling) {
       await advance();
       return;
     }
     if (!canSubmit) return;
     try {
-      if (direction.type === "") {
-        await api.appendEntry(gameId, threadId, sceneId, draft.actorId, parseScript(draft.text));
+      if (tail.staging && latest) {
+        await stage(latest, tail.staging.type, tail.staged);
+      } else if (!tail.direction) {
+        await api.appendEntry(gameId, threadId, sceneId, tail.actorId, tail.segments);
         await reload();
       } else {
-        const res = await api.transition(gameId, threadId, {
-          direction: toDirection(direction),
-          actorId: draft.actorId,
-          segments: parseScript(draft.text),
-        });
+        const res = await api.transition(gameId, threadId, { direction: tail.direction, actorId: tail.actorId, segments: tail.segments });
         await landed(res.threadId);
       }
-      setDraft({ ...draft, text: "" });
-      setDirection(stay);
-      if (turn?.actorId === draft.actorId) setTurn(null);
+      setDraft("");
+      if (turn?.actorId === tail.actorId) setTurn(null);
     } catch (err) {
       onError(err);
     }
@@ -250,15 +274,17 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
     try {
       await api.deleteEntry(gameId, threadId, entry.sceneId, entry.id);
       dropped(entry.id);
+      // A staging line gone changes who is there; the scenes carry that too.
+      if (entry.type === "enter" || entry.type === "exit") await onChange();
     } catch (err) {
       onError(err);
     }
   }
 
   async function showPrompt() {
-    if (!draft.actorId || !sceneId) return;
+    if (!tail.actorId || !sceneId) return;
     try {
-      setPreview(await api.prompt(gameId, threadId, sceneId, draft.actorId));
+      setPreview(await api.prompt(gameId, threadId, sceneId, tail.actorId));
       debug.current?.showModal();
     } catch (err) {
       onError(err);
@@ -274,7 +300,7 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
     return d.type === "cut" ? ` The play cuts to ${where}; present: ${who}.` : ` ${who} split off to ${where}.`;
   }
 
-  const submitLabel = direction.type === "" ? "Add entry" : direction.type[0].toUpperCase() + direction.type.slice(1);
+  const submitLabel = tail.direction ? tail.direction.type[0]!.toUpperCase() + tail.direction.type.slice(1) : "Add entry";
 
   return (
     <section>
@@ -293,19 +319,6 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
           >
             ×
           </button>
-          <div className={styles.present}>
-            <span>Present:</span>
-            {actors.map((a) => (
-              <label key={a.id}>
-                <input
-                  type="checkbox"
-                  checked={sc.cast.includes(a.id)}
-                  onChange={(e) => void setPresent(sc, a.id, e.target.checked)}
-                />{" "}
-                {a.name}
-              </label>
-            ))}
-          </div>
           {entries
             .filter((e) => e.sceneId === sc.id)
             .map((entry) => (
@@ -316,7 +329,7 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
                     data-interactive={entry.type !== "present" ? "" : undefined}
                   >
                     <p>
-                      {entry.type === "present" ? "Present: " : entry.type === "enter" ? "Enter " : "Exit "}
+                      {entry.type === "present" ? "Present: " : entry.type === "enter" ? "Enter: " : "Exit: "}
                       {(entry.actors ?? []).map(nameOf).join(", ") || "nobody"}
                       {entry.type !== "present" && "."}
                     </p>
@@ -351,13 +364,12 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
                 ) : entry.id === editing ? (
                   <article className={`${styles.entry} ${styles.editing}`}>
                     <EntryForm
-                      actors={presentIn(sc)}
-                      actorId={edit.actorId}
-                      text={edit.text}
-                      onActor={(id) => setEdit({ ...edit, actorId: id })}
-                      onText={(text) => setEdit({ ...edit, text })}
+                      text={edit}
+                      analysis={edited}
+                      context={editContext}
+                      onText={setEdit}
                       onSubmit={() => void save()}
-                      canSubmit={ready(edit)}
+                      canSubmit={complete(edited)}
                       submitLabel="Save"
                       inline
                       extra={
@@ -413,13 +425,12 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
                 {inserting === entry.id ? (
                   <article className={`${styles.entry} ${styles.editing}`}>
                     <EntryForm
-                      actors={presentIn(sc)}
-                      actorId={insert.actorId}
-                      text={insert.text}
-                      onActor={(id) => setInsert({ ...insert, actorId: id })}
-                      onText={(text) => setInsert({ ...insert, text })}
+                      text={insert}
+                      analysis={analyze(insert, context(sc, entry.id))}
+                      context={context(sc, entry.id)}
+                      onText={setInsert}
                       onSubmit={() => void insertAfter(sc, entry.id)}
-                      canSubmit={ready(insert)}
+                      canSubmit={complete(analyze(insert, context(sc, entry.id)))}
                       submitLabel="Insert"
                       inline
                       extra={
@@ -438,7 +449,8 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
                     title="Insert an entry here"
                     onClick={() => {
                       setInserting(entry.id);
-                      setInsert({ actorId: presentIn(sc)[0]?.id ?? "", text: "" });
+                      const first = castAt(sc, entry.id)[0];
+                      setInsert(first ? `${nameOf(first)}:\n` : "");
                     }}
                   >
                     <span aria-hidden="true">+</span>
@@ -488,27 +500,13 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
       )}
       {!ended && (
         <EntryForm
-          actors={presentIn(latest)}
-          actorId={draft.actorId}
-          text={draft.text}
-          onActor={(id) => setDraft({ ...draft, actorId: id })}
-          onText={(text) => setDraft({ ...draft, text })}
+          text={draft}
+          analysis={tail}
+          context={tailContext}
+          onText={setDraft}
           onSubmit={() => void append()}
           canSubmit={canSubmit}
           submitLabel={submitLabel}
-          lockActor={Boolean(turn?.user)}
-          below={
-            <DirectionControls
-              subjects={subjects}
-              threads={others}
-              value={direction}
-              canStay={Boolean(sceneId)}
-              from={latest ? nameOf(latest.placeId) : undefined}
-              onChange={(next) =>
-                setDirection(next.type === "cut" && direction.type !== "cut" ? { ...next, cast: latest?.cast ?? [] } : next)
-              }
-            />
-          }
           extra={
             <>
               {turn?.user ? (
@@ -525,13 +523,17 @@ export function Entries({ gameId, director, threadId, threads, scenes, subjects,
                   Cancel
                 </button>
               )}
-              <button type="button" className={styles.debug} onClick={() => void showPrompt()} disabled={!draft.actorId || !sceneId}>
+              <button type="button" className={styles.aside} onClick={() => help.current?.showModal()} title="How an entry is written">
+                Help
+              </button>
+              <button type="button" className={styles.debug} onClick={() => void showPrompt()} disabled={!tail.actorId || !sceneId}>
                 Debug
               </button>
             </>
           }
         />
       )}
+      <SyntaxHelp ref={help} />
       <Modal ref={thinking} title={thought?.title ?? "Thinking"}>
         <pre className={styles.think}>{thought?.text}</pre>
       </Modal>

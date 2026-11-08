@@ -1,19 +1,88 @@
 @layer components {
+  /* The backdrop and the textarea share one grid cell and the same metrics, so
+     the glyphs line up. Only colour and opacity may differ between a styled
+     line and plain text: anything that changes glyph widths, like italic or
+     bold, would put the caret beside the letters instead of between them. */
   .editor {
+    position: relative;
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.6rem;
   }
 
-  .editor textarea {
-    font-family: inherit;
-    resize: vertical;
-  }
-
-  .preview {
-    padding: 0.3rem 0.6rem;
-    border: 1px dashed color-mix(in srgb, currentColor 30%, transparent);
+  .backdrop,
+  .text {
+    grid-area: 1 / 1;
+    margin: 0;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid transparent;
     border-radius: 0.3rem;
-    min-height: 3rem;
+    font: inherit;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    tab-size: 4;
+  }
+
+  .backdrop {
+    overflow: hidden;
+    color: inherit;
+    background: Field;
+    border-color: color-mix(in srgb, currentColor 40%, transparent);
+    pointer-events: none;
+  }
+
+  .text {
+    position: relative;
+    color: transparent;
+    caret-color: CanvasText;
+    background: transparent;
+    resize: vertical;
+    overflow: auto;
+  }
+
+  .text::placeholder {
+    color: color-mix(in srgb, CanvasText 45%, transparent);
+  }
+
+  .cue {
+    opacity: 0.7;
+  }
+
+  .action {
+    color: color-mix(in srgb, CanvasText 70%, LinkText);
+  }
+
+  .thought {
+    opacity: 0.6;
+  }
+
+  .staging,
+  .move {
+    opacity: 0.75;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+  }
+
+  /* What Tab would add to the name being typed. */
+  .ghost {
+    opacity: 0.45;
+  }
+
+  .problem {
+    text-decoration: underline wavy #c33;
+    text-decoration-skip-ink: none;
+    background: color-mix(in srgb, #c33 12%, transparent);
+  }
+
+  /* The reason, under the marked span the pointer is on. */
+  .tip {
+    position: absolute;
+    z-index: 1;
+    max-width: 24rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid color-mix(in srgb, #c33 50%, transparent);
+    border-radius: 0.3rem;
+    background: Canvas;
+    color: #c33;
+    font-size: 0.85em;
+    pointer-events: none;
   }
 }

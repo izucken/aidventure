@@ -198,7 +198,7 @@ func TestAdvance(t *testing.T) {
 	}
 
 	// The director may not hand the first word to someone the move leaves out.
-	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, []string{mara.ID}); err != nil {
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Exit, []string{mara.ID}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := roller.Advance(ctx, g.ID, th.ID, nil); err == nil || !strings.Contains(err.Error(), "Mara") {
@@ -230,7 +230,7 @@ func TestAdvance(t *testing.T) {
 	sc = all[1]
 
 	// The director splits a user-controlled actor off: her turn carries the direction, place, link and all.
-	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{mara.ID}); err != nil {
+	if _, err := entries.Presence(ctx, g.ID, th.ID, sc.ID, entry.Enter, []string{mara.ID}, ""); err != nil {
 		t.Fatal(err)
 	}
 	eng.moves = decision("split", "Mara", "newPlace", `{"name":"The quay","description":"a stone landing","link":"down the steps from"}`, "with", `["Mara"]`)

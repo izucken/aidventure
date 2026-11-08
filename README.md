@@ -19,11 +19,12 @@ Everything runs in containers. Once: `cp .env.example .env` and set your uid/gid
 so bind-mounted files stay yours, and install the web dependencies as described
 in [web](web). Then:
 
-    docker compose up --watch
+    docker compose up
 
 Open http://localhost:8080. The Go server proxies the UI to Vite, so edits under
 `web/` hot-reload in the browser; edits under `cmd/` or `internal/` rebuild and
-restart the Go binary. The dev binary and its data live in `bin/dev/`.
+restart the Go binary (see [dev/api.sh](dev/api.sh)). The dev binary and its
+data live in `bin/dev/`.
 
 ## Build
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"aidventure/internal/attribute"
 	"aidventure/internal/game"
 	"aidventure/internal/subject"
 )
@@ -75,9 +76,11 @@ func (a subjectsAPI) remove(w http.ResponseWriter, r *http.Request) {
 
 func (a subjectsAPI) fail(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, attribute.ErrBad):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, subject.ErrInUse):
 		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, game.ErrNotFound), errors.Is(err, subject.ErrNotFound):
+	case errors.Is(err, game.ErrNotFound), errors.Is(err, subject.ErrNotFound), errors.Is(err, attribute.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	default:
 		a.log.Error("request failed", "err", err)

@@ -1,0 +1,39 @@
+@layer components {
+  .topic + .topic {
+    margin-top: 1.2rem;
+  }
+
+  .topic h4 {
+    margin: 0 0 0.3rem;
+  }
+
+  .topic p {
+    margin: 0 0 0.4rem;
+  }
+
+  .example {
+    margin: 0 0 0.5rem;
+    padding: 0.4rem 0.6rem;
+    border-left: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+    font: inherit;
+    white-space: pre-wrap;
+  }
+
+  /* Marks on the left, what they mean on the right. */
+  .kinds {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.2rem 0.8rem;
+    margin: 0;
+  }
+
+  .kinds dt {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .kinds dd {
+    margin: 0;
+    opacity: 0.85;
+  }
+}

@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"aidventure/internal/attribute"
 	"aidventure/internal/config"
 	"aidventure/internal/entry"
 	"aidventure/internal/game"
@@ -58,13 +59,14 @@ func run() error {
 	}
 
 	deps := httpserver.Deps{
-		Games:    game.NewStore(db),
-		Threads:  thread.NewStore(db),
-		Subjects: subject.NewStore(db),
-		Scenes:   scene.NewStore(db),
-		Entries:  entry.NewStore(db),
-		Models:   model.NewStore(db),
-		DB:       db,
+		Games:      game.NewStore(db),
+		Threads:    thread.NewStore(db),
+		Subjects:   subject.NewStore(db),
+		Attributes: attribute.NewStore(db),
+		Scenes:     scene.NewStore(db),
+		Entries:    entry.NewStore(db),
+		Models:     model.NewStore(db),
+		DB:         db,
 	}
 	deps.Roller = &play.Roller{
 		DB: db, Models: deps.Models, Threads: deps.Threads, Subjects: deps.Subjects, Scenes: deps.Scenes, Entries: deps.Entries,

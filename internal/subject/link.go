@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"aidventure/internal/attribute"
 	"aidventure/internal/game"
 )
 
@@ -22,19 +23,22 @@ var (
 // directed edge read as "From relation To". Both ends are subjects of the
 // same game.
 type Link struct {
-	ID        string    `json:"id"`
-	GameID    string    `json:"gameId"`
-	FromID    string    `json:"fromId"`
-	ToID      string    `json:"toId"`
-	Relation  string    `json:"relation"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID       string `json:"id"`
+	GameID   string `json:"gameId"`
+	FromID   string `json:"fromId"`
+	ToID     string `json:"toId"`
+	Relation string `json:"relation"`
+	// Attributes are the qualities the link carries beyond its relation.
+	Attributes []attribute.Value `json:"attributes"`
+	CreatedAt  time.Time         `json:"createdAt"`
 }
 
 // LinkInput is what an author sets on a link.
 type LinkInput struct {
-	FromID   string `json:"fromId"`
-	ToID     string `json:"toId"`
-	Relation string `json:"relation"`
+	FromID     string            `json:"fromId"`
+	ToID       string            `json:"toId"`
+	Relation   string            `json:"relation"`
+	Attributes []attribute.Value `json:"attributes"`
 }
 
 func (in *LinkInput) validate() error {
@@ -53,6 +57,10 @@ func (s *Store) Links(ctx context.Context, gameID string) ([]Link, error) {
 	if err := game.Require(ctx, s.db, gameID); err != nil {
 		return nil, err
 	}
+	carried, err := attribute.LinkValues(ctx, s.db, gameID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id, game_id, from_id, to_id, relation, created_at FROM links WHERE game_id = ? ORDER BY id`, gameID)
 	if err != nil {
 		return nil, fmt.Errorf("list links: %w", err)
@@ -67,6 +75,10 @@ func (s *Store) Links(ctx context.Context, gameID string) ([]Link, error) {
 		}
 		if l.CreatedAt, err = time.Parse(time.RFC3339, created); err != nil {
 			return nil, fmt.Errorf("list links: %w", err)
+		}
+		l.Attributes = carried[l.ID]
+		if l.Attributes == nil {
+			l.Attributes = []attribute.Value{}
 		}
 		links = append(links, l)
 	}
@@ -100,15 +112,21 @@ func InsertLink(ctx context.Context, tx *sql.Tx, gameID string, in LinkInput) (L
 	if err != nil {
 		return Link{}, fmt.Errorf("add link: %w", err)
 	}
-	l := Link{ID: id.String(), GameID: gameID, FromID: in.FromID, ToID: in.ToID, Relation: in.Relation, CreatedAt: time.Now().UTC().Truncate(time.Second)}
+	l := Link{ID: id.String(), GameID: gameID, FromID: in.FromID, ToID: in.ToID, Relation: in.Relation, Attributes: in.Attributes, CreatedAt: time.Now().UTC().Truncate(time.Second)}
+	if l.Attributes == nil {
+		l.Attributes = []attribute.Value{}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO links (id, game_id, from_id, to_id, relation, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		l.ID, l.GameID, l.FromID, l.ToID, l.Relation, l.CreatedAt.Format(time.RFC3339)); err != nil {
 		return Link{}, fmt.Errorf("add link: %w", err)
 	}
+	if err := attribute.SetLinkValues(ctx, tx, gameID, l.ID, l.Attributes); err != nil {
+		return Link{}, err
+	}
 	return l, nil
 }
 
-// UpdateLink replaces the ends and the relation of a link of the game.
+// UpdateLink replaces the ends, the relation and the attributes of a link of the game.
 func (s *Store) UpdateLink(ctx context.Context, gameID, id string, in LinkInput) error {
 	if err := in.validate(); err != nil {
 		return err
@@ -131,6 +149,9 @@ func (s *Store) UpdateLink(ctx context.Context, gameID, id string, in LinkInput)
 		return fmt.Errorf("update link: %w", err)
 	} else if n == 0 {
 		return fmt.Errorf("%w: link %s in game %s", ErrNoLink, id, gameID)
+	}
+	if err := attribute.SetLinkValues(ctx, tx, gameID, id, in.Attributes); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

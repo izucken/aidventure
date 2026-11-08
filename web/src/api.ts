@@ -15,11 +15,17 @@ export type Thread = {
   parentSceneId?: string;
   endedByEntryId?: string;
 };
+// What a declared attribute may be: a yes/no, a whole number, a decimal, or one of its options.
+export type AttributeKind = "flag" | "integer" | "float" | "enum";
+export type AttributeInput = { name: string; description: string; kind: AttributeKind; options: string[] };
+export type Attribute = AttributeInput & { id: string; gameId: string; createdAt: string };
+// A quality a subject or link carries: under a declared attribute, or freeform under its own name. The value is text whatever the kind.
+export type AttributeValue = { attributeId?: string; name?: string; value: string };
 // tracked marks an actor the story follows: a split keeps following tracked actors who part.
-export type SubjectInput = { name: string; description: string; actor: boolean; scene: boolean; user: boolean; tracked: boolean };
+export type SubjectInput = { name: string; description: string; actor: boolean; scene: boolean; user: boolean; tracked: boolean; attributes: AttributeValue[] };
 export type Subject = SubjectInput & { id: string; gameId: string; createdAt: string };
 // How one subject stands to another, in the author's words, read as "from relation to".
-export type LinkInput = { fromId: string; toId: string; relation: string };
+export type LinkInput = { fromId: string; toId: string; relation: string; attributes: AttributeValue[] };
 export type Link = LinkInput & { id: string; gameId: string; createdAt: string };
 export type Scene = {
   id: string;
@@ -140,6 +146,13 @@ export const api = {
     request<void>("PUT", `/api/games/${gameId}/links/${id}`, input),
   deleteLink: (gameId: string, id: string) => request<void>("DELETE", `/api/games/${gameId}/links/${id}`),
 
+  attributes: (gameId: string) => request<Attribute[]>("GET", `/api/games/${gameId}/attributes`),
+  createAttribute: (gameId: string, input: AttributeInput) =>
+    request<Attribute>("POST", `/api/games/${gameId}/attributes`, input),
+  updateAttribute: (gameId: string, id: string, input: AttributeInput) =>
+    request<void>("PUT", `/api/games/${gameId}/attributes/${id}`, input),
+  deleteAttribute: (gameId: string, id: string) => request<void>("DELETE", `/api/games/${gameId}/attributes/${id}`),
+
   scenes: (gameId: string, threadId: string) =>
     request<Scene[]>("GET", `/api/games/${gameId}/threads/${threadId}/scenes`),
   // Takes the play out of the thread's current scene: a cut, split or converge with the entry that arrives.
@@ -148,9 +161,9 @@ export const api = {
 
   retitleScene: (gameId: string, threadId: string, sceneId: string, title: string) =>
     request<void>("PUT", `/api/games/${gameId}/threads/${threadId}/scenes/${sceneId}`, { title }),
-  // Records who entered or exited the scene, as an entry at its end.
-  presence: (gameId: string, threadId: string, sceneId: string, type: "enter" | "exit", actors: string[]) =>
-    request<Entry>("POST", `/api/games/${gameId}/threads/${threadId}/scenes/${sceneId}/presence`, { type, actors }),
+  // Records who entered or exited the scene: at its end, or right after afterId.
+  presence: (gameId: string, threadId: string, sceneId: string, type: "enter" | "exit", actors: string[], afterId?: string) =>
+    request<Entry>("POST", `/api/games/${gameId}/threads/${threadId}/scenes/${sceneId}/presence`, { type, actors, afterId }),
   deleteScene: (gameId: string, threadId: string, sceneId: string) =>
     request<void>("DELETE", `/api/games/${gameId}/threads/${threadId}/scenes/${sceneId}`),
 

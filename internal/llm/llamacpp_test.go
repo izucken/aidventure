@@ -39,11 +39,14 @@ func fakeServer(t *testing.T, content string) (*httptest.Server, *[]map[string]a
 				"timings": map[string]float64{"prompt_ms": 12.5, "predicted_ms": 100},
 			}
 			if stops, ok := body["stop"].([]any); ok {
+				// Current servers say why they stopped in stop_type alone.
+				delete(out, "stopped_eos")
+				out["stop_type"] = "eos"
 				if before, _, found := strings.Cut(content, stops[0].(string)); found {
-					out["content"], out["stopped_eos"], out["stopped_word"] = before, false, true
+					out["content"], out["stop_type"] = before, "word"
 				}
 				if limit, _ := body["n_predict"].(float64); limit > 0 && int(limit) < len(out["content"].(string)) {
-					out["content"], out["stopped_word"], out["stopped_limit"] = out["content"].(string)[:int(limit)], false, true
+					out["content"], out["stop_type"] = out["content"].(string)[:int(limit)], "limit"
 				}
 			} else if p, _ := body["prompt"].(string); strings.Contains(p, "<channel|>") && !strings.HasSuffix(p, "<|channel>thought\n<channel|>") {
 				// The answer call after a thought: what follows the close marker.
@@ -165,7 +168,7 @@ func TestStreamSplitsThought(t *testing.T) {
 			chunks := []map[string]any{{"content": "\"Hel"}, {"content": "lo.\"\n", "stop": true, "stopped_eos": true, "tokens_predicted": 3}}
 			if _, thinking := body["stop"]; thinking {
 				// The opener is split across chunks on purpose.
-				chunks = []map[string]any{{"content": "<|chan"}, {"content": "nel>thought\nShe is "}, {"content": "stalling.", "stop": true, "stopped_word": true, "tokens_predicted": 4, "tokens_evaluated": 40}}
+				chunks = []map[string]any{{"content": "<|chan"}, {"content": "nel>thought\nShe is "}, {"content": "stalling.", "stop": true, "stop_type": "word", "tokens_predicted": 4, "tokens_evaluated": 40}}
 			}
 			for _, chunk := range chunks {
 				b, _ := json.Marshal(chunk)

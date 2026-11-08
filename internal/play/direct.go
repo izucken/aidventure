@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"aidventure/internal/attribute"
 	"aidventure/internal/entry"
 	"aidventure/internal/game"
 	"aidventure/internal/llm"
@@ -60,6 +61,7 @@ type stage struct {
 	scene   scene.Scene
 	entries []entry.Entry
 	links   []subject.Link
+	attrs   []attribute.Attribute
 	told    game.Settings
 }
 
@@ -77,6 +79,9 @@ func (r *Roller) stage(ctx context.Context, gameID, threadID string) (stage, err
 		st.byID[s.ID] = s
 	}
 	if st.links, err = r.Subjects.Links(ctx, gameID); err != nil {
+		return stage{}, err
+	}
+	if st.attrs, err = attribute.Read(ctx, r.DB, gameID); err != nil {
 		return stage{}, err
 	}
 	threads, err := r.Threads.List(ctx, gameID)
@@ -132,7 +137,7 @@ func (st stage) tracked() []subject.Subject {
 // sheet lays out the state of play for the director and the pick.
 func (st stage) sheet() string {
 	var b strings.Builder
-	roster(&b, st.subjects, st.links)
+	roster(&b, st.attrs, st.subjects, st.links)
 	b.WriteString("\nTHREADS\n")
 	for _, t := range st.threads {
 		sc := st.at[t.ID]

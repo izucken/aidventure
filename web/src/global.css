@@ -6,6 +6,8 @@
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
+  /* The gutter is always there, so a view that scrolls and one that does not line up (adr/203). */
+  scrollbar-gutter: stable;
 }
 
 body {

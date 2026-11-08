@@ -6,8 +6,8 @@ services:
     user: "${UID}:${GID}"
     working_dir: /src
     # Built then run, not go run: data lives next to the binary (adr/2), and a
-    # go run binary lives in a temp dir.
-    command: sh -c "go build -o bin/dev/aidventure ./cmd/aidventure && exec bin/dev/aidventure"
+    # go run binary lives in a temp dir. The script rebuilds on source changes.
+    command: sh dev/api.sh
     environment:
       AIDVENTURE_ADDR: ":8080"
       AIDVENTURE_UI_DEV_SERVER: http://web:5173
@@ -23,16 +23,6 @@ services:
       - "8080:8080"
     depends_on:
       - web
-    develop:
-      watch:
-        - path: ./cmd
-          action: restart
-        - path: ./internal
-          action: restart
-          ignore:
-            - ui/static/dist
-        - path: ./go.mod
-          action: restart
     mem_limit: 512m
     memswap_limit: 512m
     cpus: 2

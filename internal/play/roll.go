@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"aidventure/internal/attribute"
 	"aidventure/internal/entry"
 	"aidventure/internal/game"
 	"aidventure/internal/llm"
@@ -215,6 +216,10 @@ func (r *Roller) prepare(ctx context.Context, gameID, threadID, sceneID, actorID
 	if err != nil {
 		return asking{}, err
 	}
+	attrs, err := attribute.Read(ctx, r.DB, gameID)
+	if err != nil {
+		return asking{}, err
+	}
 	told, err := game.ReadSettings(ctx, r.DB, gameID)
 	if err != nil {
 		return asking{}, err
@@ -231,7 +236,7 @@ func (r *Roller) prepare(ctx context.Context, gameID, threadID, sceneID, actorID
 		}
 		ask = describe(dir, byID, byID[scenes[at].PlaceID].Name, into) + "Next entry for " + actor.Name + ", now there."
 	}
-	return asking{model: m, eng: eng, req: render(actor, ask, scenes, subjects, entries, links, byID, told.Voice), actor: actor, scene: scenes[at]}, nil
+	return asking{model: m, eng: eng, req: render(actor, ask, scenes, attrs, subjects, entries, links, byID, told.Voice), actor: actor, scene: scenes[at]}, nil
 }
 
 const system = `You write for one actor, the one named, and for nobody else. Write only the next entry, from that actor's point of view, as JSON in the schema given: one to five beats, each a kind and a text.
@@ -249,9 +254,9 @@ Think briefly, a few sentences at most, then write.`
 
 // render lays out the thread by stability: places and characters first, then
 // the script scene by scene, then the ask. Cache hits depend on that order.
-func render(actor subject.Subject, ask string, scenes []scene.Scene, subjects []subject.Subject, entries []entry.Entry, links []subject.Link, byID map[string]subject.Subject, voice string) llm.Request {
+func render(actor subject.Subject, ask string, scenes []scene.Scene, attrs []attribute.Attribute, subjects []subject.Subject, entries []entry.Entry, links []subject.Link, byID map[string]subject.Subject, voice string) llm.Request {
 	var b strings.Builder
-	roster(&b, subjects, links)
+	roster(&b, attrs, subjects, links)
 	b.WriteString("\nSCRIPT\n")
 	for _, sc := range scenes {
 		writeScene(&b, sc, entries, byID)
@@ -269,11 +274,37 @@ func render(actor subject.Subject, ask string, scenes []scene.Scene, subjects []
 }
 
 // roster lists the places and characters of the game, and how they stand to each other.
-func roster(b *strings.Builder, subjects []subject.Subject, links []subject.Link) {
+func roster(b *strings.Builder, attrs []attribute.Attribute, subjects []subject.Subject, links []subject.Link) {
+	if len(attrs) > 0 {
+		b.WriteString("ATTRIBUTES\n")
+		for _, a := range attrs {
+			kind := string(a.Kind)
+			if a.Kind == attribute.Enum {
+				kind += ": " + strings.Join(a.Options, ", ")
+			}
+			line := a.Name + " (" + kind + ")"
+			if a.Description != "" {
+				line += ": " + a.Description
+			}
+			b.WriteString(line + "\n")
+		}
+		b.WriteString("\n")
+	}
+	// carried is what a subject or link holds, as a bracketed tail after its line.
+	carried := func(vs []attribute.Value) string {
+		if len(vs) == 0 {
+			return ""
+		}
+		out := make([]string, 0, len(vs))
+		for _, v := range vs {
+			out = append(out, attribute.Describe(v, attrs))
+		}
+		return " [" + strings.Join(out, ", ") + "]"
+	}
 	b.WriteString("PLACES\n")
 	for _, s := range subjects {
 		if s.Scene {
-			b.WriteString(s.Name + ": " + s.Description + "\n")
+			b.WriteString(s.Name + ": " + s.Description + carried(s.Attributes) + "\n")
 		}
 	}
 	b.WriteString("\nCHARACTERS\n")
@@ -283,7 +314,7 @@ func roster(b *strings.Builder, subjects []subject.Subject, links []subject.Link
 			if s.Tracked {
 				name += " (tracked)"
 			}
-			b.WriteString(name + ": " + s.Description + "\n")
+			b.WriteString(name + ": " + s.Description + carried(s.Attributes) + "\n")
 		}
 	}
 	if len(links) == 0 {
@@ -295,7 +326,7 @@ func roster(b *strings.Builder, subjects []subject.Subject, links []subject.Link
 	}
 	b.WriteString("\nLINKS\n")
 	for _, l := range links {
-		b.WriteString(byID[l.FromID] + " " + l.Relation + " " + byID[l.ToID] + ".\n")
+		b.WriteString(byID[l.FromID] + " " + l.Relation + " " + byID[l.ToID] + "." + carried(l.Attributes) + "\n")
 	}
 }
 

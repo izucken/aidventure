@@ -23,11 +23,6 @@
     opacity: 0.7;
   }
 
-  .field select {
-    align-self: flex-start;
-    min-width: 12rem;
-  }
-
   .actions {
     display: flex;
     gap: 0.4rem;

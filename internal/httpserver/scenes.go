@@ -28,17 +28,19 @@ func (a scenesAPI) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, scenes)
 }
 
-// presence records who entered or exited the scene, as an entry at its end.
+// presence records who entered or exited the scene, at its end or after a given entry.
 func (a scenesAPI) presence(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Type   entry.Type `json:"type"`
 		Actors []string   `json:"actors"`
+		// AfterID places the line right after that entry; empty puts it at the end.
+		AfterID string `json:"afterId"`
 	}
 	if err := decodeJSON(w, r, &in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
 		return
 	}
-	e, err := a.entries.Presence(r.Context(), r.PathValue("gameId"), r.PathValue("threadId"), r.PathValue("sceneId"), in.Type, in.Actors)
+	e, err := a.entries.Presence(r.Context(), r.PathValue("gameId"), r.PathValue("threadId"), r.PathValue("sceneId"), in.Type, in.Actors, in.AfterID)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -76,7 +78,7 @@ func (a scenesAPI) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, game.ErrNotFound), errors.Is(err, thread.ErrNotFound), errors.Is(err, scene.ErrNotFound), errors.Is(err, subject.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, entry.ErrNotActor):
+	case errors.Is(err, entry.ErrNotActor), errors.Is(err, entry.ErrNotFound):
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	default:
 		a.log.Error("request failed", "err", err)

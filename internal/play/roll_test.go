@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"aidventure/internal/attribute"
 	"aidventure/internal/entry"
 	"aidventure/internal/game"
 	"aidventure/internal/llm"
@@ -90,14 +91,22 @@ func TestRoll(t *testing.T) {
 	if _, err := roller.Roll(ctx, g.ID, th.ID, sc2.ID, mara.ID, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := subjects.AddLink(ctx, g.ID, subject.LinkInput{FromID: innkeeper.ID, ToID: tavern.ID, Relation: "keeps"}); err != nil {
+	mood, err := attribute.NewStore(db).Create(ctx, g.ID, attribute.Input{Name: "Mood", Description: "How she is.", Kind: attribute.Enum, Options: []string{"calm", "angry"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := subjects.Update(ctx, g.ID, mara.ID, subject.Input{Name: "Mara", Description: "Owes.", Actor: true, Tracked: true, Attributes: []attribute.Value{{AttributeID: mood.ID, Value: "angry"}, {Name: "scar", Value: "left cheek"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := subjects.AddLink(ctx, g.ID, subject.LinkInput{FromID: innkeeper.ID, ToID: tavern.ID, Relation: "keeps", Attributes: []attribute.Value{{Name: "since", Value: "spring"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := roller.Roll(ctx, g.ID, th.ID, sc2.ID, mara.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"PLACES\nTavern: Low beams.", "Innkeeper: Tired.", "Mara (tracked): Owes.", "\nLINKS\nInnkeeper keeps Tavern.\n\nSCRIPT\n",
+		"ATTRIBUTES\nMood (enum: calm, angry): How she is.\n\nPLACES\nTavern: Low beams.", "Innkeeper: Tired.", "Mara (tracked): Owes. [Mood: angry, scar: left cheek]",
+		"\nLINKS\nInnkeeper keeps Tavern. [since: spring]\n\nSCRIPT\n",
 		"TAVERN\nPresent: Innkeeper, Mara\n", "INNKEEPER:\nYou said three days.",
 		"I know what I said.", "TAVERN\nPresent: Mara\n", "Later, the same room.", "Next entry for Mara.",
 	} {

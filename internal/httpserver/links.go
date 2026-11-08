@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"aidventure/internal/attribute"
 	"aidventure/internal/game"
 	"aidventure/internal/subject"
 )
@@ -60,9 +61,9 @@ func (a linksAPI) remove(w http.ResponseWriter, r *http.Request) {
 
 func (a linksAPI) fail(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, subject.ErrBadLink):
+	case errors.Is(err, subject.ErrBadLink), errors.Is(err, attribute.ErrBad):
 		writeError(w, http.StatusBadRequest, err.Error())
-	case errors.Is(err, game.ErrNotFound), errors.Is(err, subject.ErrNotFound), errors.Is(err, subject.ErrNoLink):
+	case errors.Is(err, game.ErrNotFound), errors.Is(err, subject.ErrNotFound), errors.Is(err, subject.ErrNoLink), errors.Is(err, attribute.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	default:
 		a.log.Error("request failed", "err", err)
